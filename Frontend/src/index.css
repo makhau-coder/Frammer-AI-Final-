@@ -1,0 +1,160 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===============================
+   THEME VARIABLES
+================================ */
+
+@layer base {
+
+  :root {
+
+    --background: 220 10% 6.1%;
+    --foreground: 220 15% 91%;
+
+    --card: 225 10% 9%;
+    --card-foreground: 220 15% 91%;
+
+    --popover: 225 10% 9%;
+    --popover-foreground: 220 15% 91%;
+
+    --primary: 355 100% 64%;
+    --primary-foreground: 220 15% 91%;
+
+    --secondary: 225 8% 15%;
+    --secondary-foreground: 220 15% 91%;
+
+    --muted: 225 8% 15%;
+    --muted-foreground: 220 5% 63%;
+
+    --accent: 355 100% 64%;
+    --accent-foreground: 220 15% 91%;
+
+    --destructive: 4 74% 57%;
+    --destructive-foreground: 220 15% 91%;
+
+    --success: 145 63% 49%;
+    --success-foreground: 220 10% 5%;
+
+    --warning: 36 100% 50%;
+    --warning-foreground: 220 10% 5%;
+
+    --border: 228 8% 18%;
+    --input: 228 8% 18%;
+    --ring: 355 100% 64%;
+
+    --radius: 0.8rem;
+
+    --chart-1: 355 100% 64%;
+    --chart-2: 200 70% 50%;
+    --chart-3: 145 63% 49%;
+    --chart-4: 36 100% 50%;
+    --chart-5: 280 60% 50%;
+
+    /* ── Sidebar variables (required by shadcn sidebar component) ── */
+    --sidebar-background: 225 12% 8%;
+    --sidebar-foreground: 220 15% 75%;
+    --sidebar-primary: 355 100% 64%;
+    --sidebar-primary-foreground: 220 15% 91%;
+    --sidebar-accent: 225 10% 14%;
+    --sidebar-accent-foreground: 220 15% 91%;
+    --sidebar-border: 228 8% 14%;
+    --sidebar-ring: 355 100% 64%;
+  }
+
+}
+
+/* ===============================
+   BASE STYLES
+================================ */
+
+@layer base {
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+}
+
+/* ===============================
+   SCROLLBAR
+================================ */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--background));
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}
+
+/* Hide scrollbar track for filter panel */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ===============================
+   COMPONENT UTILITIES
+================================ */
+
+@layer components {
+
+  .card-shadow {
+    box-shadow:
+      0 4px 12px rgb(0 0 0 / 0.35),
+      inset 0 1px 0 rgb(255 255 255 / 0.03);
+  }
+
+  .card-shadow-hover:hover {
+    box-shadow: 0 0 20px rgb(255 255 255 / 0.08);
+  }
+
+  .dashboard-card {
+    @apply transition-all duration-200 ease-in-out;
+  }
+
+  .dashboard-card:hover {
+    transform: translateY(-2px);
+  }
+
+  .chart-container {
+    @apply w-full h-full flex items-center justify-center;
+  }
+
+  .kpi-value {
+    @apply text-2xl font-semibold tracking-tight;
+  }
+
+  .kpi-title {
+    @apply text-sm text-muted-foreground;
+  }
+
+}
+
+/* ===============================
+   SIDEBAR THEME TOKENS
+   (maps --sidebar-* → Tailwind bg-sidebar etc.)
+================================ */
+
+@layer base {
+  .bg-sidebar            { background-color: hsl(var(--sidebar-background)); }
+  .text-sidebar-foreground { color: hsl(var(--sidebar-foreground)); }
+  .bg-sidebar-accent     { background-color: hsl(var(--sidebar-accent)); }
+  .text-sidebar-foreground { color: hsl(var(--sidebar-foreground)); }
+  .border-sidebar-border { border-color: hsl(var(--sidebar-border)); }
+}
