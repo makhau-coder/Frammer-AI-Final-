@@ -1,0 +1,16 @@
+pandas
+numpy
+duckdb
+fastapi
+uvicorn
+pydantic
+python-dotenv
+watchdog
+sqlalchemy
+langchain
+openai
+faiss-cpu
+sentence-transformers
+matplotlib
+seaborn
+jupyter
