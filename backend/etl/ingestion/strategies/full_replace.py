@@ -1,5 +1,6 @@
 import pandas as pd
 import logging
+import re
 from ingestion.config import FILE_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -50,19 +51,20 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
 # --- Main Strategy Function ---
 
 def ingest_full_replace(filepath: str, filename: str, duckdb_conn) -> int:
-    df = pd.read_csv(filepath)
+    df = pd.read_csv(filepath, sep=None, engine='python', encoding='utf-8-sig', on_bad_lines='warn')
     df = _clean(df)
 
-    # Derive a safe SQL table name from the filename
     table_name = (
     filename
     .replace(".csv", "")
-    .replace("(", "")       # ← add this
-    .replace(")", "")       # ← add this
+    .replace("(", "_")      # ← preserves separator as underscore
+    .replace(")", "")
     .replace("-", "_")
     .replace(" ", "_")
     .lower()
-)
+    )
+    table_name = re.sub(r"_+", "_", table_name).strip("_")
+    # ↑ collapses any double/triple underscores from multiple replacements
 
     # Atomic wipe + reload
     duckdb_conn.execute(f"DROP TABLE IF EXISTS {table_name}")

@@ -1,280 +1,429 @@
 /**
  * src/pages/DataQualityPage.jsx
  *
- * Dedicated data quality monitoring page.
- * Directly addresses the 15-mark "Data Quality & Governance" judging criterion.
- *
- * Shows:
- * - Overall data quality score
- * - Missing value percentages per field
- * - Unknown attribution counts
- * - Duplicate video ID detection
- * - Published videos missing platform/URL
- * - Visual health indicators
+ * Uses ONLY GET /api/data-quality/checks
+ * Shows all validation results organised as:
+ *   1. Summary KPIs (score, pass/warn/fail counts, last run)
+ *   2. Quality score bar chart per file/table
+ *   3. Per-file expandable cards with full check table
+ *   4. All-checks search + filter panel
  */
 
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, RadialBarChart, RadialBar, Legend,
-} from "recharts";
-import {
-  AlertTriangle, CheckCircle, XCircle, Info, Database, Shield
+  CheckCircle, XCircle, AlertTriangle, RefreshCw,
+  Shield, FileText, Database, ChevronDown, ChevronUp, Search,
 } from "lucide-react";
-import { api } from "@/lib/api";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
+
+const API = "http://localhost:8000";
+const TT  = { contentStyle: { background: "#1a1b1e", border: "1px solid #333", borderRadius: 8, fontSize: 11, color: "#e0e0e0" } };
+const AX  = { tick: { fontSize: 10, fill: "#888" }, axisLine: false, tickLine: false };
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function friendlyFile(raw) {
+  if (!raw) return "—";
+  return raw
+    .replace("CLIENT1-channels.csv",                  "channels.csv")
+    .replace("channel-wise-publishing-duration.csv",   "pub-duration.csv")
+    .replace("channel-wise-publishing.csv",            "publishing.csv")
+    .replace("channel_user.csv",                       "channel×user.csv");
+}
+
+function fileScore(fail, warn) {
+  return Math.max(0, 100 - fail * 15 - warn * 8);
+}
+
+async function fetchChecks() {
+  try {
+    const r = await fetch(`${API}/api/data-quality/checks`);
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  } catch (e) {
+    console.error("[DQ]", e.message);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PAGE
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function DataQualityPage() {
 
-  const { data: dq, isLoading } = useQuery({
-    queryKey: ["dataQuality"],
-    queryFn: api.dataQuality,
+  const [expanded,     setExpanded]     = useState(null);
+  const [search,       setSearch]       = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+
+  const { data: raw, isLoading, refetch } = useQuery({
+    queryKey: ["dqChecks"],
+    queryFn:  fetchChecks,
+    staleTime: 30000,
   });
 
-  const { data: summary } = useQuery({
-    queryKey: ["summary"],
-    queryFn: api.summary,
-  });
+  // ── Derived ─────────────────────────────────────────────────────────────────
+  const total     = raw?.total   || 0;
+  const nFail     = raw?.fail    || 0;
+  const nWarn     = raw?.warn    || 0;
+  const nPass     = raw?.pass    || 0;
+  const ranAt     = raw?.ran_at;
+  const byFile    = raw?.by_file  || {};
+  const allChecks = raw?.checks   || [];
 
+  // Sort files: FAIL first → WARN → PASS
+  const sortedFiles = useMemo(() =>
+    Object.entries(byFile).sort(([, a], [, b]) => {
+      if (b.fail !== a.fail) return b.fail - a.fail;
+      return b.warn - a.warn;
+    }),
+    [byFile]
+  );
+
+  // Bar chart: one bar per file
+  const chartData = useMemo(() =>
+    sortedFiles
+      .filter(([, d]) => d.fail + d.warn + d.pass > 0)
+      .map(([file, d]) => ({
+        name:  friendlyFile(file).replace(".csv", "").slice(0, 22),
+        score: fileScore(d.fail, d.warn),
+        fail:  d.fail,
+        warn:  d.warn,
+      })),
+    [sortedFiles]
+  );
+
+  const overallScore = chartData.length
+    ? Math.round(chartData.reduce((s, d) => s + d.score, 0) / chartData.length)
+    : 0;
+
+  // Filtered all-checks list
+  const filteredChecks = useMemo(() => {
+    let list = allChecks;
+    if (statusFilter !== "ALL") list = list.filter(c => c.status === statusFilter);
+    const q = search.trim().toLowerCase();
+    if (q) list = list.filter(c =>
+      c.name.toLowerCase().includes(q)    ||
+      c.message.toLowerCase().includes(q) ||
+      (c.table || "").toLowerCase().includes(q)
+    );
+    return list;
+  }, [allChecks, statusFilter, search]);
+
+  // ── Loading ──────────────────────────────────────────────────────────────────
   if (isLoading) {
     return (
       <DashboardLayout title="Data Quality">
-        <div className="p-10 text-center text-muted-foreground">Loading quality report…</div>
+        <div className="flex items-center justify-center h-64 gap-2 text-muted-foreground text-sm">
+          <RefreshCw className="h-4 w-4 animate-spin" /> Loading validation results…
+        </div>
       </DashboardLayout>
     );
   }
 
-  const d = dq || {};
-  const score = d.data_quality_score || 0;
-  const total = d.total_videos || 0;
+  // ── Empty ────────────────────────────────────────────────────────────────────
+  if (!raw || total === 0) {
+    return (
+      <DashboardLayout title="Data Quality">
+        <div className="rounded-xl border border-border bg-card p-14 text-center">
+          <Shield className="h-12 w-12 mx-auto mb-4 text-muted-foreground/20" />
+          <p className="text-sm text-muted-foreground mb-1">No validation results yet.</p>
+          <p className="text-xs text-muted-foreground">
+            Save a CSV in <code className="font-mono bg-muted px-1 rounded">data/raw/</code> or
+            call <code className="font-mono bg-muted px-1 rounded">POST /api/etl/run</code>
+          </p>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
-  // Missing value chart data
-  const missingFields = [
-    { field: "Team Name", pct: d.missing_team_name_pct || 0 },
-    { field: "Platform", pct: d.missing_platform_pct || 0 },
-    { field: "Published URL", pct: d.missing_url_pct || 0 },
-    { field: "Input Type", pct: d.missing_input_type_pct || 0 },
-  ].sort((a, b) => b.pct - a.pct);
-
-  // Score gauge data
-  const gaugeData = [{ name: "Quality Score", value: score, fill: score >= 80 ? "#22c55e" : score >= 60 ? "#f59e0b" : "#ef4444" }];
-
-  // Issues list
-  const issues = [];
-  if (d.missing_team_name_pct > 80) issues.push({ level: "high", msg: `${d.missing_team_name_pct}% of videos have no team attribution — team-level analysis is impossible.` });
-  else if (d.missing_team_name_pct > 30) issues.push({ level: "medium", msg: `${d.missing_team_name_pct}% of videos are missing team name.` });
-  if (d.missing_platform_pct > 10) issues.push({ level: "medium", msg: `${d.missing_platform_pct}% of videos are missing publishing platform.` });
-  if (d.missing_url_pct > 20) issues.push({ level: "medium", msg: `${d.missing_url_pct}% of published videos have no URL.` });
-  if (d.duplicate_video_ids > 0) issues.push({ level: "high", msg: `${d.duplicate_video_ids} duplicate video IDs detected — potential data integrity issue.` });
-  if (d.published_missing_platform > 0) issues.push({ level: "medium", msg: `${d.published_missing_platform} published videos are missing platform data.` });
-  if (d.unknown_team_names > 0) issues.push({ level: "info", msg: `${d.unknown_team_names} videos have 'Unknown' team name — consider team mapping.` });
-
-  const scoreColor = score >= 80 ? "text-green-500" : score >= 60 ? "text-yellow-500" : "text-destructive";
-  const unknownPct = summary?.unknown_team_attribution_pct || 0;
-
+  // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <DashboardLayout title="Data Quality">
 
-      {/* Score + summary KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-          className="rounded-xl border bg-card p-5 flex flex-col gap-2">
-          <p className="text-xs text-muted-foreground uppercase tracking-wider">Quality Score</p>
-          <p className={`text-4xl font-bold ${scoreColor}`}>{score}<span className="text-lg text-muted-foreground">/100</span></p>
-          <p className="text-xs text-muted-foreground">
-            {score >= 80 ? "Good" : score >= 60 ? "Needs improvement" : "Critical issues"}
-          </p>
-        </motion.div>
-
-        <QualityKpi label="Total Videos" value={total.toLocaleString()} icon={Database} color="info" />
-        <QualityKpi label="Duplicate IDs" value={d.duplicate_video_ids || 0}
-          icon={d.duplicate_video_ids > 0 ? XCircle : CheckCircle}
-          color={d.duplicate_video_ids > 0 ? "danger" : "success"} />
-        <QualityKpi label="Unknown Teams" value={`${unknownPct}%`}
-          icon={unknownPct > 50 ? AlertTriangle : CheckCircle}
-          color={unknownPct > 50 ? "warning" : "success"} />
+      {/* ── Summary KPIs ──────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+        <KpiTile
+          label="Quality Score"
+          value={`${overallScore}/100`}
+          icon={Shield}
+          color={overallScore >= 80 ? "text-green-400" : overallScore >= 50 ? "text-yellow-400" : "text-red-400"}
+        />
+        <KpiTile label="Total Checks" value={total}  icon={FileText}      color="text-blue-400" />
+        <KpiTile label="Passed"       value={nPass}  icon={CheckCircle}   color="text-green-400" />
+        <KpiTile label="Warnings"     value={nWarn}  icon={AlertTriangle} color="text-yellow-400" />
+        <KpiTile label="Failed"       value={nFail}  icon={XCircle}       color="text-red-400" />
+        <KpiTile
+          label="Last Validated"
+          value={ranAt ? new Date(ranAt).toLocaleString(undefined, {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "Never"}
+          icon={RefreshCw}
+          color="text-muted-foreground"
+        />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-
-        {/* Missing values bar */}
-        <div className="rounded-xl border bg-card p-6">
-          <h3 className="mb-4 text-sm font-semibold">Missing Values by Field (%)</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={missingFields} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} />
-              <YAxis dataKey="field" type="category" width={100} tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(v) => `${v}%`} />
-              <Bar dataKey="pct" fill="#ef4444" radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+      {/* ── Score chart ───────────────────────────────────────────────────── */}
+      <div className="mb-6 rounded-xl border bg-card p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-semibold">Quality Score by File / Table</h3>
+          <button
+            onClick={() => refetch()}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Refresh
+          </button>
         </div>
 
-        {/* Issues panel */}
-        <div className="rounded-xl border bg-card p-6">
-          <h3 className="mb-4 text-sm font-semibold flex items-center gap-2">
-            <Shield className="h-4 w-4 text-primary" /> Issues Found
-          </h3>
-          {issues.length === 0 ? (
-            <div className="flex items-center gap-2 text-sm text-green-500">
-              <CheckCircle className="h-4 w-4" />
-              No critical data quality issues detected.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {issues.map((iss, i) => (
-                <div key={i} className={`flex gap-2 rounded-lg p-3 text-xs border-l-2 ${iss.level === "high" ? "border-destructive bg-destructive/5 text-destructive" :
-                    iss.level === "medium" ? "border-yellow-500 bg-yellow-500/5 text-yellow-600" :
-                      "border-blue-500 bg-blue-500/5 text-blue-500"
-                  }`}>
-                  {iss.level === "high" ? <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" /> :
-                    iss.level === "medium" ? <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" /> :
-                      <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />}
-                  {iss.msg}
-                </div>
+        <ResponsiveContainer width="100%" height={Math.max(180, chartData.length * 22)}>
+          <BarChart data={chartData} layout="vertical">
+            <XAxis type="number" domain={[0, 100]} unit="%" {...AX} />
+            <YAxis dataKey="name" type="category" {...AX} width={165} />
+            <Tooltip {...TT} formatter={v => [`${v}/100`, "Score"]} />
+            <Bar dataKey="score" radius={[0, 4, 4, 0]}>
+              {chartData.map((d, i) => (
+                <Cell key={i}
+                  fill={d.fail > 0 ? "#ef4444" : d.warn > 0 ? "#f59e0b" : "#22c55e"} />
               ))}
-            </div>
-          )}
-        </div>
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
 
-        {/* Field-level detail table */}
-        <div className="rounded-xl border bg-card p-6 lg:col-span-2">
-          <h3 className="mb-4 text-sm font-semibold">Field Coverage Report</h3>
-          <div className="overflow-hidden rounded-md border">
-            <table className="min-w-full text-xs">
-              <thead className="bg-muted/40">
-                <tr>
-                  {["Field", "Missing Count", "Missing %", "Coverage %", "Status"].map(h => (
-                    <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  { field: "Team Name", missingPct: d.missing_team_name_pct || 0 },
-                  { field: "Platform", missingPct: d.missing_platform_pct || 0 },
-                  { field: "Published URL", missingPct: d.missing_url_pct || 0 },
-                  { field: "Input Type", missingPct: d.missing_input_type_pct || 0 },
-                  { field: "Video ID", missingPct: 0 },
-                  { field: "Headline", missingPct: 0 },
-                  { field: "Uploaded By", missingPct: 0 },
-                ].map((row) => {
-                  const missingCount = Math.round((row.missingPct / 100) * total);
-                  const coverage = (100 - row.missingPct).toFixed(1);
-                  const status = row.missingPct === 0 ? "complete" : row.missingPct > 50 ? "critical" : "partial";
-                  return (
-                    <tr key={row.field} className="border-t border-border/50 hover:bg-muted/20">
-                      <td className="px-3 py-2 font-medium">{row.field}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{missingCount.toLocaleString()}</td>
-                      <td className="px-3 py-2">
-                        <span className={row.missingPct > 50 ? "text-destructive" : row.missingPct > 0 ? "text-yellow-500" : "text-green-500"}>
-                          {row.missingPct}%
-                        </span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${status === "complete" ? "bg-green-500" : status === "critical" ? "bg-destructive" : "bg-yellow-500"}`}
-                              style={{ width: `${coverage}%` }}
-                            />
-                          </div>
-                          <span className="text-[10px] text-muted-foreground w-10">{coverage}%</span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${status === "complete" ? "bg-green-500/10 text-green-500" :
-                            status === "critical" ? "bg-destructive/10 text-destructive" :
-                              "bg-yellow-500/10 text-yellow-600"
-                          }`}>
-                          {status === "complete" ? "Complete" : status === "critical" ? "Critical" : "Partial"}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+        <div className="flex items-center gap-5 mt-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-red-400 inline-block" />Has failures</span>
+          <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-yellow-400 inline-block" />Has warnings</span>
+          <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-green-400 inline-block" />All passing</span>
         </div>
+      </div>
 
-        {/* Recommendations */}
-        <div className="rounded-xl border bg-card p-6 lg:col-span-2">
-          <h3 className="mb-4 text-sm font-semibold">Recommendations</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {[
-              {
-                title: "Fix Team Attribution",
-                desc: "Mandate team name assignment at upload time. Consider auto-assigning based on channel.",
-                priority: unknownPct > 50 ? "High" : "Low",
-              },
-              {
-                title: "Enforce Platform Metadata",
-                desc: "Require platform selection before marking a video as published in the workflow.",
-                priority: (d.missing_platform_pct || 0) > 10 ? "Medium" : "Low",
-              },
-              {
-                title: "Validate Published URLs",
-                desc: "Add URL format validation and post-publish verification to reduce missing links.",
-                priority: (d.missing_url_pct || 0) > 20 ? "Medium" : "Low",
-              },
-              {
-                title: "Deduplicate Video IDs",
-                desc: `${d.duplicate_video_ids || 0} duplicate IDs found. Run deduplication job on video_list.`,
-                priority: (d.duplicate_video_ids || 0) > 0 ? "High" : "None",
-              },
-              {
-                title: "Input Type Coverage",
-                desc: "Improve input type classification. Missing types limit content mix analysis.",
-                priority: (d.missing_input_type_pct || 0) > 5 ? "Medium" : "Low",
-              },
-              {
-                title: "Automate Quality Checks",
-                desc: "Run POST /api/etl/run with data quality validation after each CSV update.",
-                priority: "Ongoing",
-              },
-            ].map((rec) => (
-              <div key={rec.title} className="rounded-lg border border-border/50 p-3">
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-xs font-semibold">{rec.title}</p>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${rec.priority === "High" ? "bg-destructive/10 text-destructive" :
-                      rec.priority === "Medium" ? "bg-yellow-500/10 text-yellow-600" :
-                        rec.priority === "None" ? "bg-green-500/10 text-green-500" :
-                          "bg-primary/10 text-primary"
-                    }`}>
-                    {rec.priority}
-                  </span>
+      {/* ── Per-file cards ────────────────────────────────────────────────── */}
+      <h3 className="text-sm font-semibold mb-3">
+        Validation Results by File
+        <span className="ml-2 text-xs font-normal text-muted-foreground">
+          — click any row to expand checks
+        </span>
+      </h3>
+
+      <div className="space-y-2 mb-8">
+        {sortedFiles.map(([file, data], idx) => {
+          const score    = fileScore(data.fail, data.warn);
+          const isDb     = file.startsWith("db:");
+          const isOpen   = expanded === idx;
+          const border   = data.fail > 0 ? "border-red-500/40"
+                         : data.warn > 0 ? "border-yellow-500/30"
+                         :                 "border-green-500/25";
+
+          return (
+            <div key={file} className={`rounded-xl border ${border} bg-card overflow-hidden`}>
+              <button
+                onClick={() => setExpanded(isOpen ? null : idx)}
+                className="w-full flex items-center gap-3 px-5 py-3.5 text-left hover:bg-muted/20 transition-colors"
+              >
+                {/* Icon */}
+                {isDb
+                  ? <Database className={`h-4 w-4 shrink-0 ${data.fail > 0 ? "text-red-400" : data.warn > 0 ? "text-yellow-400" : "text-blue-400"}`} />
+                  : data.fail > 0 ? <XCircle      className="h-4 w-4 shrink-0 text-red-400" />
+                  : data.warn > 0 ? <AlertTriangle className="h-4 w-4 shrink-0 text-yellow-400" />
+                  :                 <CheckCircle   className="h-4 w-4 shrink-0 text-green-400" />}
+
+                {/* Name */}
+                <span className="flex-1 text-sm font-medium font-mono truncate">
+                  {friendlyFile(file)}
+                </span>
+
+                {/* Badges */}
+                <div className="flex items-center gap-2.5 text-xs shrink-0">
+                  {data.fail > 0 && <Pill color="bg-red-500/10    text-red-400"    label={`${data.fail} FAIL`} />}
+                  {data.warn > 0 && <Pill color="bg-yellow-500/10 text-yellow-500" label={`${data.warn} WARN`} />}
+                  {data.pass > 0 && <Pill color="bg-green-500/10  text-green-400"  label={`${data.pass} PASS`} />}
+
+                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                    score >= 80 ? "bg-green-500/10 text-green-400" :
+                    score >= 50 ? "bg-yellow-500/10 text-yellow-500" :
+                                  "bg-red-500/10 text-red-400"
+                  }`}>{score}/100</span>
+
+                  {isOpen
+                    ? <ChevronUp   className="h-4 w-4 text-muted-foreground" />
+                    : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
                 </div>
-                <p className="text-[11px] text-muted-foreground">{rec.desc}</p>
-              </div>
+              </button>
+
+              <AnimatePresence>
+                {isOpen && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.16 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="border-t border-border/40 overflow-x-auto">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-muted/30">
+                          <tr>
+                            {["Status","Check","Message","Count","%"].map(h => (
+                              <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.checks.map((c, ci) => (
+                            <tr key={ci} className="border-t border-border/30 hover:bg-muted/10">
+                              <td className="px-3 py-2"><StatusPill status={c.status} /></td>
+                              <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground max-w-[210px] truncate" title={c.name}>{c.name}</td>
+                              <td className="px-3 py-2 max-w-sm leading-snug">{c.message}</td>
+                              <td className="px-3 py-2 text-right whitespace-nowrap">
+                                {c.count > 0
+                                  ? <span className="font-mono">{c.count.toLocaleString()}</span>
+                                  : <span className="text-muted-foreground/40">—</span>}
+                              </td>
+                              <td className="px-3 py-2 text-right whitespace-nowrap">
+                                {c.pct > 0
+                                  ? <span className={c.pct > 80 ? "text-red-400 font-bold" : c.pct > 20 ? "text-yellow-500" : "text-muted-foreground"}>
+                                      {c.pct}%
+                                    </span>
+                                  : <span className="text-muted-foreground/40">—</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── All checks: search + filter ───────────────────────────────────── */}
+      <div className="rounded-xl border bg-card p-5">
+        <h3 className="text-sm font-semibold mb-4">
+          Search All {total} Checks
+        </h3>
+
+        <div className="flex flex-col sm:flex-row gap-3 mb-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search by check name, message or file…"
+              className="w-full pl-9 pr-3 h-9 rounded-lg border border-border bg-muted/20 text-sm placeholder:text-muted-foreground/50 outline-none focus:border-primary transition-colors"
+            />
+          </div>
+          <div className="flex gap-1.5 flex-wrap">
+            {[
+              { key: "ALL",  label: `All (${total})` },
+              { key: "FAIL", label: `FAIL (${nFail})` },
+              { key: "WARN", label: `WARN (${nWarn})` },
+              { key: "PASS", label: `PASS (${nPass})` },
+            ].map(({ key, label }) => (
+              <button key={key} onClick={() => setStatusFilter(key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                  statusFilter === key
+                    ? key === "FAIL" ? "bg-red-500/20 text-red-400 border-red-500/40"
+                    : key === "WARN" ? "bg-yellow-500/20 text-yellow-500 border-yellow-500/40"
+                    : key === "PASS" ? "bg-green-500/20 text-green-400 border-green-500/40"
+                    :                  "bg-primary/20 text-primary border-primary/40"
+                    : "bg-muted/30 text-muted-foreground border-border/50 hover:bg-muted/60"
+                }`}>
+                {label}
+              </button>
             ))}
           </div>
         </div>
 
+        <div className="overflow-auto rounded-lg border border-border">
+          <table className="min-w-full text-xs">
+            <thead className="bg-muted/40 sticky top-0">
+              <tr>
+                {["Status","File / Table","Check Name","Message","Count","%"].map(h => (
+                  <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filteredChecks.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-10 text-center text-muted-foreground">
+                    No checks match your filter.
+                  </td>
+                </tr>
+              ) : filteredChecks.map((c, i) => (
+                <tr key={i} className="border-t border-border/30 hover:bg-muted/10">
+                  <td className="px-3 py-2"><StatusPill status={c.status} /></td>
+                  <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground whitespace-nowrap">
+                    {friendlyFile(c.table || "—")}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground max-w-[180px] truncate" title={c.name}>
+                    {c.name}
+                  </td>
+                  <td className="px-3 py-2 max-w-xs leading-snug">{c.message}</td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap">
+                    {c.count > 0
+                      ? <span className="font-mono">{c.count.toLocaleString()}</span>
+                      : <span className="text-muted-foreground/40">—</span>}
+                  </td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap">
+                    {c.pct > 0
+                      ? <span className={c.pct > 80 ? "text-red-400 font-bold" : c.pct > 20 ? "text-yellow-500" : "text-muted-foreground"}>
+                          {c.pct}%
+                        </span>
+                      : <span className="text-muted-foreground/40">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <p className="mt-2 text-xs text-muted-foreground">
+          Showing {filteredChecks.length.toLocaleString()} of {total.toLocaleString()} checks
+          {ranAt && ` · Last run ${new Date(ranAt).toLocaleString()}`}
+        </p>
       </div>
+
     </DashboardLayout>
   );
 }
 
-function QualityKpi({ label, value, icon: Icon, color }) {
-  const colors = {
-    info: "text-blue-400  bg-blue-400/10",
-    success: "text-green-500 bg-green-500/10",
-    warning: "text-yellow-500 bg-yellow-500/10",
-    danger: "text-destructive bg-destructive/10",
+// ─────────────────────────────────────────────────────────────────────────────
+// Micro-components
+// ─────────────────────────────────────────────────────────────────────────────
+
+function KpiTile({ label, value, icon: Icon, color }) {
+  return (
+    <div className="rounded-xl border bg-card p-4 flex items-start gap-3">
+      <div className={`mt-0.5 ${color}`}><Icon className="h-4 w-4" /></div>
+      <div className="min-w-0">
+        <p className="text-[11px] text-muted-foreground uppercase tracking-wider truncate">{label}</p>
+        <p className="text-xl font-bold mt-0.5 truncate">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function StatusPill({ status }) {
+  const s = {
+    FAIL: "bg-red-500/15    text-red-400    border border-red-500/30",
+    WARN: "bg-yellow-500/15 text-yellow-500  border border-yellow-500/30",
+    PASS: "bg-green-500/15  text-green-400   border border-green-500/30",
   };
   return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-      className="rounded-xl border bg-card p-5 flex items-start justify-between">
-      <div>
-        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">{label}</p>
-        <p className="text-2xl font-bold text-foreground">{value}</p>
-      </div>
-      <div className={`rounded-lg p-2 ${colors[color] || colors.info}`}>
-        <Icon className="h-5 w-5" />
-      </div>
-    </motion.div>
+    <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${s[status] || s.PASS}`}>
+      {status}
+    </span>
+  );
+}
+
+function Pill({ color, label }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${color}`}>
+      {label}
+    </span>
   );
 }

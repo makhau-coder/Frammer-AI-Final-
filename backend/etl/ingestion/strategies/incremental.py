@@ -33,6 +33,7 @@ def _create_table_if_not_exists(duckdb_conn):
         )
     """)
 
+
 def _clean(df: pd.DataFrame) -> pd.DataFrame:
     """Clean and normalise the raw video_list dataframe."""
 
@@ -45,7 +46,8 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(columns=COLUMN_MAP)
 
     # 3. Convert 'Published' Yes/No → True/False boolean
-    df["published"] = df["published"].str.upper().map({"YES": True, "NO": False})
+    df["published"] = df["published"].str.upper().map(
+        {"YES": True, "NO": False})
 
     # 4. Drop rows with null video_id — cannot be indexed or tracked
     before = len(df)
@@ -63,14 +65,17 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
     df = df.drop_duplicates(subset=["video_id"], keep="first")
     dupes = before - len(df)
     if dupes > 0:
-        logger.warning(f"Removed {dupes} duplicate video_ids within incoming batch")
+        logger.warning(
+            f"Removed {dupes} duplicate video_ids within incoming batch")
 
     return df
+
 
 def _get_existing_ids(duckdb_conn) -> set:
     """Fetch all video_ids already in DuckDB as a Python set."""
     result = duckdb_conn.execute("SELECT video_id FROM video_list").fetchall()
     return {row[0] for row in result}
+
 
 def ingest_incremental(filepath: str, filename: str, duckdb_conn) -> int:
     """
@@ -79,7 +84,15 @@ def ingest_incremental(filepath: str, filename: str, duckdb_conn) -> int:
     """
     _create_table_if_not_exists(duckdb_conn)
 
-    df = pd.read_csv(filepath, dtype={"Video ID": "string"})
+    df = pd.read_csv(
+        filepath,
+        sep=None,
+        engine='python',
+        encoding='utf-8-sig',
+        on_bad_lines='warn',
+        dtype={"Video ID": "string"}
+    )
+
     df = _clean(df)
 
     # Delta detection — filter to only new video_ids
