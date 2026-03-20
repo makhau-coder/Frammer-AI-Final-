@@ -1,15 +1,11 @@
-"""
-nlp/chart_generator.py
+# nlp/chart_generator.py
+#
+# Automatically generates an appropriate EDA chart from NLP query results.
+# Called after DuckDB execution — inspects data shape and routes to the
+# right Plotly chart type. Saves PNG to /tmp and returns the path.
 
-Generates Plotly chart specs from NLP query results.
-Returns Plotly JSON (dict) — NOT a file path.
-
-The frontend receives the JSON and renders it with Plotly.js directly,
-giving users interactive, hoverable charts without any server file I/O.
-
-Called by engine.py after DuckDB execution.
-"""
-
+import os
+import uuid
 import logging
 import pandas as pd
 import plotly.express as px
@@ -18,9 +14,8 @@ from plotly.subplots import make_subplots
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Theme
-# ─────────────────────────────────────────────────────────────────────────────
+CHART_DIR = "/tmp/frammer_charts"
+os.makedirs(CHART_DIR, exist_ok=True)
 
 FRAMMER_COLORS = px.colors.qualitative.Bold
 
@@ -35,41 +30,19 @@ PLOTLY_LAYOUT = dict(
     margin=dict(l=60, r=40, t=70, b=60),
 )
 
-_RATE_COLS = {
-    "publish_rate", "multiplication_ratio", "rate",
-    "publish rate", "conversion", "pct", "percent",
-}
+
+def _save(fig, chart_id: str) -> str:
+    path = os.path.join(CHART_DIR, f"{chart_id}.png")
+    fig.write_image(path, width=900, height=480, scale=2)
+    return path
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Internal helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+# CHART BUILDERS
+# ─────────────────────────────────────────────────────────────────────
 
-def _is_skip(col: str) -> bool:
-    """Columns that should never be treated as numeric axes."""
-    skip = {"video_id", "published_url", "source", "headline",
-            "url", "id", "published_status"}
-    return col.lower() in skip
-
-
-def _is_time(df: pd.DataFrame):
-    """Detect if any column looks like a time/month series."""
-    for col in df.columns:
-        if col.lower() in ("month", "year", "date", "period", "week"):
-            return True, col
-    return False, None
-
-
-def _to_json(fig: go.Figure) -> dict:
-    """Convert a Plotly Figure to a JSON-serialisable dict."""
-    return fig.to_dict()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Chart builders — all return dict (Plotly JSON)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _line_chart(df, cat_col, num_cols, title) -> dict:
+def _line_chart(df: pd.DataFrame, cat_col: str,
+                num_cols: list[str], title: str, chart_id: str) -> str:
     fig = go.Figure()
     for i, col in enumerate(num_cols):
         fig.add_trace(go.Scatter(
@@ -83,59 +56,78 @@ def _line_chart(df, cat_col, num_cols, title) -> dict:
                       yaxis_title="Count", **PLOTLY_LAYOUT)
     fig.update_xaxes(tickangle=-45, gridcolor="#2a2a2a")
     fig.update_yaxes(gridcolor="#2a2a2a")
-    return _to_json(fig)
+    return _save(fig, chart_id)
 
 
-def _bar_chart(df, cat_col, num_cols, title, orientation="h") -> dict:
-    """Single metric or grouped bar chart."""
+def _bar_chart(df: pd.DataFrame, cat_col: str,
+               num_cols: list[str], title: str, chart_id: str,
+               orientation: str = "h") -> str:
+    """Handles both single-metric and grouped bar."""
     if len(num_cols) == 1:
         num_col = num_cols[0]
         df = df.sort_values(num_col, ascending=(orientation == "h"))
         if orientation == "h":
-            fig = px.bar(df, x=num_col, y=cat_col, orientation="h", title=title,
-                         color=num_col, color_continuous_scale="Blues", text=num_col)
+            fig = px.bar(df, x=num_col, y=cat_col,
+                         orientation="h", title=title,
+                         color=num_col,
+                         color_continuous_scale="Blues",
+                         text=num_col)
             fig.update_traces(texttemplate="%{text:,}", textposition="outside")
+            fig.update_layout(**PLOTLY_LAYOUT)
+            fig.update_xaxes(gridcolor="#2a2a2a")
+            fig.update_yaxes(gridcolor="#2a2a2a")
         else:
-            fig = px.bar(df, x=cat_col, y=num_col, title=title,
-                         color=num_col, color_continuous_scale="Blues", text=num_col)
+            fig = px.bar(df, x=cat_col, y=num_col,
+                         title=title, color=cat_col,
+                         color_discrete_sequence=FRAMMER_COLORS,
+                         text=num_col)
             fig.update_traces(texttemplate="%{text:,}", textposition="outside")
-        fig.update_layout(**PLOTLY_LAYOUT)
-        fig.update_xaxes(gridcolor="#2a2a2a")
-        fig.update_yaxes(gridcolor="#2a2a2a")
+            fig.update_layout(**PLOTLY_LAYOUT, showlegend=False)
+            fig.update_xaxes(gridcolor="#2a2a2a", tickangle=-30)
+            fig.update_yaxes(gridcolor="#2a2a2a")
     else:
         # Grouped bar
         fig = go.Figure()
         for i, col in enumerate(num_cols):
-            if orientation == "h":
-                fig.add_trace(go.Bar(
-                    y=df[cat_col], x=df[col], name=col,
-                    orientation="h",
-                    marker_color=FRAMMER_COLORS[i % len(FRAMMER_COLORS)],
-                ))
-            else:
-                fig.add_trace(go.Bar(
-                    x=df[cat_col], y=df[col], name=col,
-                    marker_color=FRAMMER_COLORS[i % len(FRAMMER_COLORS)],
-                ))
+            fig.add_trace(go.Bar(
+                x=df[cat_col], y=df[col],
+                name=col,
+                marker_color=FRAMMER_COLORS[i % len(FRAMMER_COLORS)],
+            ))
         fig.update_layout(
-            title=title, barmode="group", **PLOTLY_LAYOUT
+            barmode="group", title=title,
+            xaxis_title=cat_col, **PLOTLY_LAYOUT
         )
         fig.update_xaxes(gridcolor="#2a2a2a", tickangle=-30)
         fig.update_yaxes(gridcolor="#2a2a2a")
+    return _save(fig, chart_id)
 
-    return _to_json(fig)
+
+def _heatmap(df: pd.DataFrame, row_col: str, col_col: str,
+             val_col: str, title: str, chart_id: str) -> str:
+    pivot = df.pivot_table(index=row_col, columns=col_col,
+                           values=val_col, aggfunc="sum", fill_value=0)
+    fig = px.imshow(
+        pivot, title=title, text_auto=True,
+        color_continuous_scale="Blues",
+        aspect="auto",
+    )
+    fig.update_layout(**PLOTLY_LAYOUT)
+    return _save(fig, chart_id)
 
 
-def _dual_axis_chart(df, cat_col, bar_col, line_col, title) -> dict:
-    """Bar (volume) + line (rate) on dual y-axes."""
+def _dual_axis_chart(df: pd.DataFrame, x_col: str,
+                     bar_col: str, line_col: str,
+                     title: str, chart_id: str) -> str:
+    """Bar for volume, line for rate — classic EDA combo."""
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(
-        go.Bar(x=df[cat_col], y=df[bar_col], name=bar_col,
-               marker_color=FRAMMER_COLORS[0]),
+        go.Bar(x=df[x_col], y=df[bar_col], name=bar_col,
+               marker_color=FRAMMER_COLORS[0], opacity=0.75),
         secondary_y=False,
     )
     fig.add_trace(
-        go.Scatter(x=df[cat_col], y=df[line_col], name=line_col,
+        go.Scatter(x=df[x_col], y=df[line_col], name=line_col,
                    mode="lines+markers",
                    line=dict(color=FRAMMER_COLORS[2], width=2),
                    marker=dict(size=7)),
@@ -143,126 +135,142 @@ def _dual_axis_chart(df, cat_col, bar_col, line_col, title) -> dict:
     )
     fig.update_layout(title=title, **PLOTLY_LAYOUT)
     fig.update_xaxes(tickangle=-45, gridcolor="#2a2a2a")
-    fig.update_yaxes(gridcolor="#2a2a2a", secondary_y=False, title_text=bar_col)
-    fig.update_yaxes(gridcolor="#2a2a2a", secondary_y=True,  title_text=line_col)
-    return _to_json(fig)
+    fig.update_yaxes(gridcolor="#2a2a2a", secondary_y=False)
+    fig.update_yaxes(gridcolor="#2a2a2a", secondary_y=True,
+                     ticksuffix="%")
+    return _save(fig, chart_id)
 
 
-def _heatmap(df, cat_col1, cat_col2, val_col, title) -> dict:
-    pivot = df.pivot_table(index=cat_col1, columns=cat_col2, values=val_col, fill_value=0)
-    fig = go.Figure(data=go.Heatmap(
-        z=pivot.values,
-        x=pivot.columns.tolist(),
-        y=pivot.index.tolist(),
-        colorscale="Blues",
-        hoverongaps=False,
-    ))
-    fig.update_layout(title=title, **PLOTLY_LAYOUT)
-    return _to_json(fig)
+# ─────────────────────────────────────────────────────────────────────
+# ROUTER
+# ─────────────────────────────────────────────────────────────────────
+
+# Columns that are clearly rates/percentages — use secondary axis
+_RATE_COLS = {"publish_rate_pct", "upload_to_publish_rate_pct",
+              "compression_ratio", "creation_multiplier"}
+
+# Columns to never treat as chart values
+_SKIP_COLS = {"Month", "Channel", "User", "Input Type", "Output Type",
+              "Language", "platform", "uploaded_by", "input_type",
+              "published_platform", "video_id", "headline",
+              "_raw", "ingested_at"}
 
 
-def _pie_chart(df, cat_col, val_col, title) -> dict:
-    fig = px.pie(df, names=cat_col, values=val_col, title=title,
-                 color_discrete_sequence=FRAMMER_COLORS)
-    fig.update_layout(**PLOTLY_LAYOUT)
-    return _to_json(fig)
+def _is_skip(col: str) -> bool:
+    return col in _SKIP_COLS or col.endswith("_raw")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PUBLIC: generate_chart
-# Returns (chart_json_dict, chart_type_str) or None if data is unsuitable.
-# ─────────────────────────────────────────────────────────────────────────────
+def _is_time(df: pd.DataFrame) -> tuple[bool, str]:
+    for col in df.columns:
+        if col.lower() in ("month", "date", "week"):
+            return True, col
+    return False, ""
+
 
 def generate_chart(
     question: str,
     data: list[dict],
     sql: str,
-) -> tuple[dict, str] | None:
+) -> tuple[str, str] | None:
     """
-    Inspects the result data shape and generates the most appropriate
-    Plotly chart as a JSON-serialisable dict.
-
-    Args:
-        question: Original NL question (used for chart title).
-        data:     Query result rows as list of dicts.
-        sql:      Executed SQL (used for context hints).
-
-    Returns:
-        (chart_json_dict, chart_type_str)  or  None
+    Main entry point.
+    Returns (chart_path, chart_type) or None if no chart is appropriate
+    (e.g. single-row stat, empty data, or unrecognised shape).
     """
-    if not data:
+    if not data or len(data) == 0:
         return None
 
     df = pd.DataFrame(data)
-    if df.empty or len(df.columns) < 2:
-        return None
-
+    chart_id = str(uuid.uuid4())[:8]
     title = question[:80]
 
-    cat_cols = [c for c in df.columns if _is_skip(c) or df[c].dtype == object]
-    num_cols = [c for c in df.columns if c not in cat_cols and not _is_skip(c)]
+    cat_cols = [c for c in df.columns if _is_skip(c) or
+                df[c].dtype == object]
+    num_cols = [c for c in df.columns if c not in cat_cols and
+                not _is_skip(c)]
 
-    # Single row → stat card only, no chart
-    if len(df) == 1 and len(num_cols) <= 2:
+    # Fewer than 3 rows — not enough data for any meaningful chart
+    if len(df) < 3:  # fewer than 3 data points = no comparison or trend possible
         return None
 
     is_time, time_col = _is_time(df)
 
-    # ── Rule 1: Time series ─────────────────────────────────────────────────
-    if is_time and num_cols:
-        rate_cols   = [c for c in num_cols if c.lower() in _RATE_COLS]
-        volume_cols = [c for c in num_cols if c.lower() not in _RATE_COLS]
+    # ── Rule 1: Time series (Month column present) ─────────────────
+    if is_time:
+        rate_cols   = [c for c in num_cols if c in _RATE_COLS]
+        volume_cols = [c for c in num_cols if c not in _RATE_COLS]
 
         if volume_cols and rate_cols:
-            chart = _dual_axis_chart(df, time_col,
-                                     bar_col=volume_cols[0],
-                                     line_col=rate_cols[0],
-                                     title=title)
-            return chart, "dual_axis"
+            if len(df) < 3:  # fewer than 3 time points = no trend to show on a dual-axis chart
+                return None
+            path = _dual_axis_chart(
+                df, time_col,
+                bar_col=volume_cols[0],
+                line_col=rate_cols[0],
+                title=title, chart_id=chart_id,
+            )
+            return path, "dual_axis"
         else:
-            chart = _line_chart(df, time_col, num_cols, title=title)
-            return chart, "line"
+            if len(df) < 4:  # fewer than 4 time points = not enough for a meaningful line trend
+                return None
+            path = _line_chart(df, time_col, num_cols,
+                               title=title, chart_id=chart_id)
+            return path, "line"
 
-    # ── Rule 2: Two cats + 1 numeric → heatmap ─────────────────────────────
+    # ── Rule 2: Two categoricals + 1 numeric → heatmap ────────────
     if len(cat_cols) >= 2 and len(num_cols) == 1:
-        if df[cat_cols[0]].nunique() <= 20 and df[cat_cols[1]].nunique() <= 10:
-            chart = _heatmap(df, cat_cols[0], cat_cols[1], num_cols[0], title=title)
-            return chart, "heatmap"
+        if (df[cat_cols[0]].nunique() <= 20 and
+                df[cat_cols[1]].nunique() <= 10 and
+                df[cat_cols[0]].nunique() >= 2 and  # fewer than 2 unique row values = no matrix to compare
+                df[cat_cols[1]].nunique() >= 2):     # fewer than 2 unique col values = single-column heatmap is meaningless
+            path = _heatmap(df, cat_cols[0], cat_cols[1],
+                            num_cols[0], title=title, chart_id=chart_id)
+            return path, "heatmap"
 
-    # ── Rule 3: 1 cat column with metrics ──────────────────────────────────
+    # ── Rule 3: 1 categorical + metrics ───────────────────────────
     if len(cat_cols) >= 1:
         cat = cat_cols[0]
-        rate_cols   = [c for c in num_cols if c.lower() in _RATE_COLS]
-        volume_cols = [c for c in num_cols if c.lower() not in _RATE_COLS]
+        rate_cols   = [c for c in num_cols if c in _RATE_COLS]
+        volume_cols = [c for c in num_cols if c not in _RATE_COLS]
 
-        # Pie chart for platform/language breakdown with small cardinality
-        if df[cat].nunique() <= 7 and len(num_cols) == 1:
-            chart = _pie_chart(df, cat, num_cols[0], title=title)
-            return chart, "pie"
-
-        # Dual axis: volume + rate
-        if volume_cols and len(rate_cols) == 1:
-            df_sorted = df.sort_values(volume_cols[0], ascending=False).head(15)
-            chart = _dual_axis_chart(df_sorted, cat,
-                                     bar_col=volume_cols[0],
-                                     line_col=rate_cols[0],
-                                     title=title)
-            return chart, "dual_axis"
+        # Dual-axis: one volume + one rate col
+        if len(volume_cols) >= 1 and len(rate_cols) == 1:
+            if df[cat].nunique() < 3:  # fewer than 3 bars = no comparison possible on a dual-axis chart
+                return None
+            df_sorted = df.sort_values(volume_cols[0], ascending=False)
+            if len(df_sorted) > 15:
+                df_sorted = df_sorted.head(15)
+            path = _dual_axis_chart(
+                df_sorted, cat,
+                bar_col=volume_cols[0],
+                line_col=rate_cols[0],
+                title=title, chart_id=chart_id,
+            )
+            return path, "dual_axis"
 
         # Multiple volume cols → grouped bar
         if len(volume_cols) >= 2:
-            df_sorted = df.sort_values(volume_cols[0], ascending=False).head(15)
+            if df[cat].nunique() < 3:  # fewer than 3 bars = no comparison possible
+                return None
+            df_sorted = df.sort_values(volume_cols[0], ascending=False)
             orient = "v" if df[cat].nunique() <= 8 else "h"
-            chart = _bar_chart(df_sorted, cat, volume_cols[:4],
-                                title=title, orientation=orient)
-            return chart, "bar"
+            path = _bar_chart(df_sorted, cat, volume_cols[:4],
+                              title=title, chart_id=chart_id,
+                              orientation=orient)
+            return path, "bar"
 
-        # Single numeric → horizontal bar
+        # Single numeric col → horizontal bar
         if len(num_cols) == 1:
-            df_sorted = df.sort_values(num_cols[0], ascending=False).head(20)
+            if df[cat].nunique() < 3:  # fewer than 3 bars = a single or double bar conveys no comparative insight
+                return None
+            df_sorted = df.sort_values(num_cols[0], ascending=False)
+            if len(df_sorted) > 20:
+                df_sorted = df_sorted.head(20)
             orient = "h" if df[cat].nunique() > 5 else "v"
-            chart = _bar_chart(df_sorted, cat, num_cols,
-                                title=title, orientation=orient)
-            return chart, "bar"
+            path = _bar_chart(df_sorted, cat, num_cols,
+                              title=title, chart_id=chart_id,
+                              orientation=orient)
+            return path, "bar"
 
     return None
+

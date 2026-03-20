@@ -27,13 +27,13 @@ logger = logging.getLogger(__name__)
 
 # Controls how many rows are sent to Gemini for synthesis.
 # Lower = fewer tokens consumed = more room for the insight response.
-_MAX_ROWS_IN_PROMPT = 20
+_MAX_ROWS_IN_PROMPT = 100
 
 GEMINI_MODEL = "gemini-2.5-flash"
 
 GENERATION_CONFIG = types.GenerateContentConfig(
     temperature=0.4,
-    max_output_tokens=2048,
+    max_output_tokens=8192,
     candidate_count=1,
 )
 

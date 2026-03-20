@@ -30,6 +30,9 @@ for _p in [_BACKEND_ROOT, _ETL_ROOT]:
         sys.path.insert(0, _p)
 
 from config import API_HOST, API_PORT, DATA_PATH
+from config import DATABASE_PATH as _DB_PATH
+import os as _os
+_os.environ["FRAMMER_DB_PATH"] = _DB_PATH
 
 from api.routes.analytics import router as analytics_router
 from api.routes.etl        import router as etl_router, _run_pipeline_task
@@ -57,7 +60,7 @@ app.add_middleware(
     allow_origins    = ["*"],
     allow_methods    = ["GET", "POST"],
     allow_headers    = ["*"],
-    allow_credentials= False,
+    allow_credentials=True,
 )
 
 app.include_router(analytics_router)

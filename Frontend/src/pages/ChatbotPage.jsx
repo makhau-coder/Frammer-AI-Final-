@@ -1,355 +1,479 @@
 /**
  * src/pages/ChatbotPage.jsx
  *
- * Full-page NLQ chatbot interface.
- * Uses the SSE streaming endpoint GET /api/chat/stream
- * for real-time progressive responses.
+ * AI Analytics Chat — Frammer NLP interface
+ * POST /api/chat  →  insight · Plotly chart · data table · SQL
  *
- * Requires: npm install react-plotly.js plotly.js-dist-min
+ * Handles all agent response states:
+ *   success=true       → insight + optional chart + data table + SQL
+ *   needs_input=true   → agent asking a clarification question (amber)
+ *   cannot_answer=true → out-of-scope with suggestions (yellow)
+ *   error              → pipeline error (red)
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { useState, useRef, useEffect, useCallback } from "react";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { motion, AnimatePresence } from "framer-motion";
 import {
-  Send, Loader2, ChevronDown, ChevronUp,
-  Table, BarChart2, Sparkles, RotateCcw
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { BASE_URL } from '@/lib/api';
+  Send, Loader2, Bot, User, AlertTriangle, XCircle,
+  ChevronDown, ChevronUp, Database, Sparkles, Copy,
+  Check, BarChart2, Table2, Code2, Lightbulb,
+  HelpCircle, ArrowRight,
+} from "lucide-react";
 
-// Lazy-load Plotly
-let PlotlyLoaded = null;
-async function getPlotly() {
-  if (PlotlyLoaded) return PlotlyLoaded;
-  try {
-    const mod = await import('react-plotly.js');
-    PlotlyLoaded = mod.default;
-    return PlotlyLoaded;
-  } catch { return null; }
-}
+const API = "http://localhost:8000";
 
-const EXAMPLE_QUESTIONS = [
-  "Which channels have the biggest processed vs published gap?",
-  "Show me the monthly upload and publish trend",
-  "Which user has the highest publish rate?",
-  "What input types are most common?",
-  "Top 10 videos by published duration",
-  "Which platforms are used most for publishing?",
+const STARTERS = [
+  { icon: "📈", text: "Show me the monthly upload trend" },
+  { icon: "🏆", text: "Which user uploaded the most videos?" },
+  { icon: "📊", text: "What is the publish rate for each channel?" },
+  { icon: "⏱️", text: "How many hours has each user uploaded?" },
+  { icon: "🌍", text: "Which language has the best publish rate?" },
+  { icon: "🔝", text: "Top users by creation multiplier" },
+  { icon: "📅", text: "Which month had the highest creation multiplier?" },
+  { icon: "🎯", text: "Channel-wise publishing platform breakdown" },
 ];
 
-// ─── Message part renderers ───────────────────────────────────────────────────
-
-function SqlBlock({ sql }) {
-  const [open, setOpen] = useState(false);
-  if (!sql) return null;
-  return (
-    <div className="rounded-lg border border-border bg-muted/40 overflow-hidden text-xs">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="flex w-full items-center justify-between px-4 py-2 text-muted-foreground hover:text-foreground"
-      >
-        <span className="font-mono text-[11px] font-medium">SQL Generated</span>
-        {open ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-      </button>
-      {open && (
-        <pre className="overflow-x-auto px-4 pb-3 font-mono text-[11px] text-foreground/80 whitespace-pre-wrap border-t border-border">
-          {sql}
-        </pre>
-      )}
-    </div>
-  );
-}
-
-function DataTableBlock({ rows }) {
-  const [show, setShow] = useState(false);
-  if (!rows?.length) return null;
-  const cols    = Object.keys(rows[0]);
-  const preview = rows.slice(0, 15);
-
-  return (
-    <div className="rounded-lg border border-border bg-muted/40 overflow-hidden text-xs">
-      <button
-        onClick={() => setShow(o => !o)}
-        className="flex w-full items-center justify-between px-4 py-2 text-muted-foreground hover:text-foreground"
-      >
-        <span className="flex items-center gap-2">
-          <Table className="h-3.5 w-3.5" />
-          <span className="font-medium">{rows.length} row{rows.length !== 1 ? 's' : ''}</span>
-        </span>
-        {show ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-      </button>
-      {show && (
-        <div className="overflow-x-auto border-t border-border">
-          <table className="min-w-full text-[11px]">
-            <thead className="bg-muted/60">
-              <tr>
-                {cols.map(c => (
-                  <th key={c} className="px-3 py-2 text-left font-semibold text-muted-foreground whitespace-nowrap">
-                    {c}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {preview.map((row, i) => (
-                <tr key={i} className="border-t border-border/50 hover:bg-muted/30">
-                  {cols.map(c => (
-                    <td key={c} className="px-3 py-1.5 text-foreground/80 whitespace-nowrap">
-                      {String(row[c] ?? '')}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {rows.length > 15 && (
-            <p className="px-3 py-2 text-[11px] text-muted-foreground border-t border-border">
-              + {rows.length - 15} more rows
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PlotlyBlock({ chartJson, chartType }) {
-  const [Plot, setPlot]   = useState(null);
-  const [noLib, setNoLib] = useState(false);
-
-  useEffect(() => {
-    getPlotly().then(p => p ? setPlot(() => p) : setNoLib(true));
-  }, []);
-
-  if (noLib) {
-    return (
-      <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
-        <BarChart2 className="inline h-4 w-4 mr-2" />
-        Chart available. Install:{' '}
-        <code className="font-mono bg-muted px-1 rounded">npm install react-plotly.js plotly.js-dist-min</code>
-      </div>
-    );
-  }
-  if (!Plot || !chartJson) return null;
-
-  const layout = {
-    ...chartJson.layout,
-    paper_bgcolor: 'transparent',
-    plot_bgcolor:  'rgba(255,255,255,0.02)',
-    font:          { color: '#cbd5e1', size: 11 },
-    margin:        { l: 60, r: 20, t: 40, b: 60 },
-    height:        360,
-    autosize:      true,
-    showlegend:    true,
-    legend:        { bgcolor: 'rgba(0,0,0,0)', font: { color: '#94a3b8' } },
-    xaxis:         { ...chartJson.layout?.xaxis, gridcolor: '#2a2a2a', tickfont: { size: 10 } },
-    yaxis:         { ...chartJson.layout?.yaxis, gridcolor: '#2a2a2a', tickfont: { size: 10 } },
-  };
-
-  return (
-    <div className="rounded-lg border border-border bg-muted/40 overflow-hidden">
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
-        <BarChart2 className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-xs capitalize text-muted-foreground">{chartType} chart</span>
-      </div>
-      <Plot
-        data={chartJson.data}
-        layout={layout}
-        config={{ displayModeBar: false, responsive: true }}
-        style={{ width: '100%' }}
-        useResizeHandler
-      />
-    </div>
-  );
-}
-
-// ─── Main page ────────────────────────────────────────────────────────────────
-
 export default function ChatbotPage() {
-  const [input, setInput]       = useState('');
-  const [streaming, setStreaming] = useState(false);
-  const [messages, setMessages]  = useState([]);
-  const bottomRef = useRef(null);
-  const esRef     = useRef(null);
-  const inputRef  = useRef(null);
+  const [messages, setMessages] = useState([]);
+  const [input,    setInput]    = useState("");
+  const [loading,  setLoading]  = useState(false);
+  const bottomRef  = useRef(null);
+  const inputRef   = useRef(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
 
-  const addPart = useCallback((msgId, part) => {
-    setMessages(prev => prev.map(m =>
-      m.id === msgId ? { ...m, parts: [...m.parts, part] } : m
-    ));
+  // Auto-grow textarea height
+  const growTA = useCallback((el) => {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 120) + "px";
   }, []);
 
-  const removeThinking = useCallback((msgId) => {
-    setMessages(prev => prev.map(m =>
-      m.id === msgId ? { ...m, parts: m.parts.filter(p => p.type !== 'thinking') } : m
-    ));
-  }, []);
+  const send = useCallback(async (question) => {
+  const q = (question ?? input).trim();
+  if (!q || loading) return;
 
-  const ask = useCallback((question) => {
-    question = question.trim();
-    if (!question || streaming) return;
+  setInput("");
+  setLoading(true);
+  setMessages(prev => [...prev, { role: "user", text: q }]);
 
-    setInput('');
-    setStreaming(true);
-
-    const botId = `b-${Date.now()}`;
-
-    setMessages(prev => [
-      ...prev,
-      { id: `u-${Date.now()}`, role: 'user',  content: question },
-      { id: botId,             role: 'bot',   parts: [{ type: 'thinking' }] },
-    ]);
-
-    let thinkingDone = false;
-    const clearThinking = () => {
-      if (thinkingDone) return;
-      thinkingDone = true;
-      removeThinking(botId);
-    };
-
-    const url = `${BASE_URL}/api/chat/stream?question=${encodeURIComponent(question)}`;
-    const es  = new EventSource(url);
-    esRef.current = es;
-
-    es.addEventListener('sql_ready',     e => { clearThinking(); addPart(botId, { type: 'sql',     ...JSON.parse(e.data) }); });
-    es.addEventListener('data_ready',    e => { clearThinking(); addPart(botId, { type: 'table',   ...JSON.parse(e.data) }); });
-    es.addEventListener('insight_ready', e => { clearThinking(); addPart(botId, { type: 'insight', ...JSON.parse(e.data) }); });
-    es.addEventListener('chart_ready',   e => { clearThinking(); addPart(botId, { type: 'chart',   ...JSON.parse(e.data) }); });
-    es.addEventListener('error',         e => { clearThinking(); addPart(botId, { type: 'error',   ...JSON.parse(e.data || '{}') }); });
-
-    es.addEventListener('done', e => {
-      clearThinking();
-      const { took_ms } = JSON.parse(e.data || '{}');
-      if (took_ms) addPart(botId, { type: 'meta', took_ms });
-      es.close();
-      setStreaming(false);
-      inputRef.current?.focus();
+  try {
+    const res = await fetch(`${API}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q }),
     });
 
-    es.onerror = () => {
-      clearThinking();
-      addPart(botId, { type: 'error', message: 'Connection error. Is the backend running?' });
-      es.close();
-      setStreaming(false);
-    };
-  }, [input, streaming, addPart, removeThinking]);
+    const data = await res.json(); // ✅ only once
 
-  useEffect(() => () => esRef.current?.close(), []);
+    if (!res.ok) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
 
-  const clearChat = () => {
-    esRef.current?.close();
-    setMessages([]);
-    setStreaming(false);
+    setMessages(prev => [...prev, { role: "ai", data }]);
+
+  } catch (e) {
+    setMessages(prev => [...prev, {
+      role: "ai",
+      data: {
+        success: false,
+        error: String(e.message || e),
+      }
+    }]);
+  } finally {
+    setLoading(false);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  }
+}, [input, loading]);
+
+  const handleKey = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   };
 
   return (
     <DashboardLayout title="AI Analytics Chat">
-      <div className="flex h-[calc(100vh-8rem)] flex-col gap-4">
+      <div className="flex flex-col h-[calc(100vh-7rem)]">
 
-        {/* Example questions (only when chat is empty) */}
-        {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center flex-1 gap-6">
-            <div className="flex items-center gap-3">
-              <Sparkles className="h-8 w-8 text-primary" />
-              <div>
-                <h2 className="text-xl font-semibold">Analytics Assistant</h2>
-                <p className="text-sm text-muted-foreground">Ask anything about your video data</p>
+        {/* ── Feed ──────────────────────────────────────────────────── */}
+        <div className="flex-1 overflow-y-auto space-y-5 pb-4 pr-1">
+
+          {/* Welcome */}
+          {messages.length === 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+              className="flex flex-col items-center justify-center min-h-[60vh] gap-7 text-center"
+            >
+              <div className="relative">
+                <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-indigo-500/20 to-violet-500/20 border border-indigo-500/30 flex items-center justify-center shadow-lg">
+                  <Sparkles className="h-7 w-7 text-indigo-400" />
+                </div>
+                <span className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-green-500 border-2 border-background" />
               </div>
+
+              <div className="space-y-2 max-w-md">
+                <h2 className="text-xl font-semibold">Ask anything about your data</h2>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Natural language → SQL → insights + charts.
+                  Powered by Gemini 2.5 Flash and your Frammer DuckDB.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
+                {STARTERS.map((s, i) => (
+                  <motion.button key={i}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.08 + i * 0.04 }}
+                    onClick={() => send(s.text)}
+                    className="group flex items-center gap-3 text-left rounded-xl border border-border/60 bg-card/60 px-4 py-3 text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 hover:bg-primary/5 transition-all"
+                  >
+                    <span className="text-base shrink-0">{s.icon}</span>
+                    <span className="flex-1 leading-snug">{s.text}</span>
+                    <ArrowRight className="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-50 transition-opacity" />
+                  </motion.button>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          {/* Messages */}
+          {messages.map((msg, i) => (
+            <motion.div key={i}
+              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
+            >
+              {msg.role === "user"
+                ? <UserBubble text={msg.text} />
+                : <AIBubble   data={msg.data} />}
+            </motion.div>
+          ))}
+
+          {/* Typing */}
+          {loading && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+              className="flex items-start gap-3">
+              <AIAvatar pulse />
+              <div className="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-border bg-card px-5 py-3.5">
+                {[0, 150, 300].map(d => (
+                  <div key={d} className="h-1.5 w-1.5 rounded-full bg-indigo-400/60 animate-bounce"
+                    style={{ animationDelay: `${d}ms` }} />
+                ))}
+                <span className="text-xs text-muted-foreground ml-1">Thinking…</span>
+              </div>
+            </motion.div>
+          )}
+
+          <div ref={bottomRef} />
+        </div>
+
+        {/* ── Input ─────────────────────────────────────────────────── */}
+        <div className="mt-3">
+          <div className="flex items-end gap-2 rounded-2xl border border-border bg-card p-3 shadow-sm focus-within:border-indigo-500/40 transition-colors">
+            <textarea
+              ref={el => { inputRef.current = el; }}
+              value={input}
+              rows={1}
+              onChange={e => { setInput(e.target.value); growTA(e.target); }}
+              onKeyDown={handleKey}
+              placeholder="Ask about uploads, channels, users, durations, publish rates…"
+              style={{ resize: "none", overflow: "hidden", minHeight: 24 }}
+              className="flex-1 bg-transparent text-sm placeholder:text-muted-foreground/40 outline-none leading-relaxed"
+            />
+            <button onClick={() => send()} disabled={!input.trim() || loading}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground disabled:opacity-25 hover:opacity-85 transition-opacity">
+              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            </button>
+          </div>
+          <p className="mt-1.5 text-center text-[10px] text-muted-foreground/30">
+            Enter to send · Shift+Enter for new line
+          </p>
+        </div>
+
+      </div>
+    </DashboardLayout>
+  );
+}
+
+// ─── User bubble ──────────────────────────────────────────────────────
+function UserBubble({ text }) {
+  return (
+    <div className="flex items-end gap-2.5 justify-end">
+      <div className="max-w-[75%] rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-sm text-primary-foreground shadow-sm">
+        {text}
+      </div>
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted border border-border">
+        <User className="h-3.5 w-3.5 text-muted-foreground" />
+      </div>
+    </div>
+  );
+}
+
+// ─── AI Avatar ───────────────────────────────────────────────────────
+function AIAvatar({ pulse = false }) {
+  return (
+    <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full
+      bg-gradient-to-br from-indigo-500/20 to-violet-500/20 border border-indigo-500/30
+      ${pulse ? "animate-pulse" : ""}`}>
+      <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
+    </div>
+  );
+}
+
+// ─── AI bubble — all states ───────────────────────────────────────────
+function AIBubble({ data }) {
+  const [showTable, setShowTable] = useState(false);
+  const [showSQL,   setShowSQL]   = useState(false);
+  const [copied,    setCopied]    = useState(false);
+
+  const isError      = !data.success && !data.needs_input && !data.cannot_answer;
+  const isClarify    = data.needs_input;
+  const isOutOfScope = data.cannot_answer;
+
+  function copySQL() {
+    navigator.clipboard.writeText(data.sql).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  return (
+    <div className="flex items-start gap-3">
+      <AIAvatar />
+      <div className="flex-1 min-w-0 space-y-2">
+
+        {/* Error */}
+        {isError && (
+          <div className="rounded-2xl rounded-tl-sm border border-red-500/30 bg-red-500/5 px-4 py-3.5">
+            <div className="flex items-center gap-2 mb-1.5">
+              <XCircle className="h-3.5 w-3.5 text-red-400" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-red-400">Pipeline Error</span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 w-full max-w-3xl">
-              {EXAMPLE_QUESTIONS.map(q => (
-                <button
-                  key={q}
-                  onClick={() => ask(q)}
-                  className="rounded-lg border border-border bg-card p-3 text-left text-sm text-muted-foreground hover:border-primary hover:text-foreground transition-colors"
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
+            <p className="text-sm text-red-300/80 leading-relaxed">{data.error}</p>
           </div>
         )}
 
-        {/* Chat messages */}
-        {messages.length > 0 && (
-          <ScrollArea className="flex-1 pr-2">
-            <div className="flex flex-col gap-4 pb-4">
-              {messages.map(msg => (
-                <div key={msg.id}>
-                  {msg.role === 'user' ? (
-                    <div className="flex justify-end">
-                      <div className="max-w-2xl rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground">
-                        {msg.content}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-3 max-w-3xl">
-                      {msg.parts?.map((part, i) => {
-                        switch (part.type) {
-                          case 'thinking': return (
-                            <div key={i} className="flex items-center gap-2 text-sm text-muted-foreground">
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Analysing your question…
-                            </div>
-                          );
-                          case 'sql':    return <SqlBlock       key={i} sql={part.sql} />;
-                          case 'table':  return <DataTableBlock key={i} rows={part.rows} />;
-                          case 'insight':return (
-                            <div key={i} className="rounded-lg border border-border bg-card px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap">
-                              {part.insight}
-                            </div>
-                          );
-                          case 'chart':  return <PlotlyBlock    key={i} chartJson={part.chart_json} chartType={part.chart_type} />;
-                          case 'error':  return (
-                            <div key={i} className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                              {part.message || 'An error occurred.'}
-                            </div>
-                          );
-                          case 'meta': return (
-                            <p key={i} className="text-[11px] text-muted-foreground">
-                              Completed in {(part.took_ms / 1000).toFixed(1)}s
-                            </p>
-                          );
-                          default: return null;
-                        }
-                      })}
-                    </div>
-                  )}
-                </div>
-              ))}
-              <div ref={bottomRef} />
+        {/* Clarification */}
+        {isClarify && (
+          <div className="rounded-2xl rounded-tl-sm border border-amber-500/30 bg-amber-500/5 px-4 py-3.5">
+            <div className="flex items-center gap-2 mb-1.5">
+              <HelpCircle className="h-3.5 w-3.5 text-amber-400" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400">Clarification needed</span>
             </div>
-          </ScrollArea>
+            <p className="text-sm text-amber-200/80 leading-relaxed">{data.message}</p>
+          </div>
         )}
 
-        {/* Input bar */}
-        <div className="flex items-center gap-2 border-t border-border pt-3">
-          {messages.length > 0 && (
-            <Button variant="ghost" size="icon" onClick={clearChat} title="Clear chat" className="shrink-0">
-              <RotateCcw className="h-4 w-4" />
-            </Button>
-          )}
-          <Input
-            ref={inputRef}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && ask(input)}
-            placeholder="Ask about your video data…"
-            className="flex-1"
-            disabled={streaming}
-          />
-          <Button onClick={() => ask(input)} disabled={streaming || !input.trim()} className="shrink-0">
-            {streaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            <span className="ml-2 hidden sm:inline">Ask</span>
-          </Button>
-        </div>
+        {/* Cannot answer */}
+        {isOutOfScope && (
+          <div className="rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-3.5">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle className="h-3.5 w-3.5 text-yellow-500" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-yellow-500">Out of scope</span>
+            </div>
+            <CannotAnswerBody message={data.message} />
+          </div>
+        )}
+
+        {/* Success */}
+        {data.success && (
+          <div className="rounded-2xl rounded-tl-sm border border-border bg-card overflow-hidden">
+
+            {/* Insight */}
+            {data.insight && (
+              <div className="px-4 pt-4 pb-3">
+                <div className="flex items-center gap-1.5 mb-2.5">
+                  <Lightbulb className="h-3.5 w-3.5 text-indigo-400" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">Insight</span>
+                </div>
+                <p className="text-sm leading-relaxed text-foreground/90">{data.insight}</p>
+              </div>
+            )}
+
+            {/* Chart */}
+            {data.chart_url && (
+              <div className="px-4 pb-3">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <BarChart2 className="h-3.5 w-3.5 text-emerald-400" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400 capitalize">
+                    {data.chart_type || "chart"}
+                  </span>
+                </div>
+                <div className="rounded-xl overflow-hidden border border-border/40 bg-[#0f1117]">
+                  <img
+                    src={`${API}${data.chart_url}`}
+                    alt={`${data.chart_type} chart`}
+                    className="w-full object-contain"
+                    style={{ maxHeight: 420 }}
+                    onError={e => { e.currentTarget.closest(".rounded-xl").style.display = "none"; }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Meta row */}
+            <div className="px-4 pb-2.5 flex flex-wrap gap-3 text-[11px] text-muted-foreground/50">
+              {data.row_count > 0 && (
+                <span className="flex items-center gap-1">
+                  <Database className="h-3 w-3" />
+                  {data.row_count.toLocaleString()} row{data.row_count !== 1 ? "s" : ""}
+                </span>
+              )}
+              {data.retrieved_tables?.length > 0 && (
+                <span className="truncate max-w-xs font-mono">
+                  {data.retrieved_tables.slice(0, 2).join(", ")}
+                  {data.retrieved_tables.length > 2 && ` +${data.retrieved_tables.length - 2}`}
+                </span>
+              )}
+            </div>
+
+            {/* Data table */}
+            {data.data?.length > 0 && (
+              <div className="border-t border-border/40">
+                <button onClick={() => setShowTable(v => !v)}
+                  className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-colors">
+                  <span className="flex items-center gap-2">
+                    <Table2 className="h-3.5 w-3.5" />
+                    Data
+                    <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-mono">
+                      {data.row_count}
+                    </span>
+                  </span>
+                  {showTable ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                </button>
+                <AnimatePresence>
+                  {showTable && (
+                    <motion.div
+                      initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }}
+                      transition={{ duration: 0.15 }} className="overflow-hidden">
+                      <DataTable rows={data.data} />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+
+            {/* SQL */}
+            {data.sql && (
+              <div className="border-t border-border/40">
+                <button onClick={() => setShowSQL(v => !v)}
+                  className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-colors">
+                  <span className="flex items-center gap-2">
+                    <Code2 className="h-3.5 w-3.5" />
+                    SQL
+                  </span>
+                  {showSQL ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                </button>
+                <AnimatePresence>
+                  {showSQL && (
+                    <motion.div
+                      initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }}
+                      transition={{ duration: 0.15 }} className="overflow-hidden">
+                      <div className="relative border-t border-border/40 bg-muted/20">
+                        <button onClick={copySQL} title="Copy SQL"
+                          className="absolute right-3 top-2.5 rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+                          {copied
+                            ? <Check className="h-3.5 w-3.5 text-green-400" />
+                            : <Copy  className="h-3.5 w-3.5" />}
+                        </button>
+                        <pre className="px-4 py-3.5 pr-10 text-[11px] text-muted-foreground overflow-x-auto whitespace-pre leading-relaxed font-mono">
+                          {data.sql}
+                        </pre>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+
+          </div>
+        )}
       </div>
-    </DashboardLayout>
+    </div>
+  );
+}
+
+// ─── Cannot-answer message with suggestion list ───────────────────────
+function CannotAnswerBody({ message }) {
+  if (!message) return null;
+  const parts       = message.split("|").map(p => p.trim()).filter(Boolean);
+  const reason      = parts[0];
+  const suggestions = parts.slice(1);
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground leading-relaxed">{reason}</p>
+      {suggestions.length > 0 && (
+        <div>
+          <p className="text-[11px] text-muted-foreground/50 mb-1.5">You could try:</p>
+          <div className="space-y-1">
+            {suggestions.map((s, i) => (
+              <div key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                <span className="text-primary/50 shrink-0 font-mono">{i + 1}.</span>
+                <span>{s}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Data table ───────────────────────────────────────────────────────
+function DataTable({ rows }) {
+  if (!rows?.length) return null;
+  const cols    = Object.keys(rows[0]);
+  const display = rows.slice(0, 100);
+
+  const isNum = col => rows.slice(0, 5).every(r => r[col] === null || typeof r[col] === "number");
+
+  function fmt(v) {
+    if (v === null || v === undefined) return <span className="text-muted-foreground/25">—</span>;
+    if (typeof v === "boolean")
+      return <span className={v ? "text-green-400" : "text-muted-foreground/40"}>{v ? "Yes" : "No"}</span>;
+    if (typeof v === "number") return v.toLocaleString();
+    return String(v);
+  }
+
+  return (
+    <div className="overflow-auto max-h-72 border-t border-border/30">
+      <table className="min-w-full text-xs">
+        <thead className="sticky top-0 z-10 bg-muted/60 backdrop-blur-sm">
+          <tr>
+            {cols.map(col => (
+              <th key={col}
+                className={`px-3.5 py-2 font-semibold text-muted-foreground whitespace-nowrap border-b border-border/30
+                  ${isNum(col) ? "text-right" : "text-left"}`}>
+                {col}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {display.map((row, i) => (
+            <tr key={i}
+              className={`border-b border-border/20 hover:bg-primary/5 transition-colors
+                ${i % 2 !== 0 ? "bg-muted/10" : ""}`}>
+              {cols.map(col => (
+                <td key={col}
+                  className={`px-3.5 py-2 whitespace-nowrap font-mono
+                    ${isNum(col) ? "text-right" : "text-left"}`}>
+                  {fmt(row[col])}
+                </td>
+              ))}
+            </tr>
+          ))}
+          {rows.length > 100 && (
+            <tr>
+              <td colSpan={cols.length} className="px-3.5 py-2.5 text-center text-muted-foreground/40 text-[11px] italic">
+                Showing 100 of {rows.length.toLocaleString()} rows
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }

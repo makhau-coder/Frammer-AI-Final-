@@ -1,224 +1,169 @@
 """
-api/routes/chat.py
+api/routes/chat.py — NLP query endpoint
 
-NLQ Chatbot endpoint.
+POST /api/chat              → natural language question through NLP pipeline
+GET  /api/chat/chart/{id}   → serve the generated PNG chart
 
-Two modes:
-  POST /api/chat          → Standard JSON (full result in one response)
-  GET  /api/chat/stream   → Server-Sent Events — streams steps progressively:
-                            thinking → sql_ready → data_ready → insight_ready → chart_ready → done
+The NLP module is at backend/nlp_frammer/nlp/ — your friend's code, unchanged
+except for the bugs fixed in this session (table names, chart dir, agent path).
 
-The streaming endpoint is what the dashboard chatbot page uses so the user
-sees live progress instead of a blank screen for 3–5 seconds.
+This file handles:
+  - sys.path so NLP imports resolve from nlp_frammer/
+  - FRAMMER_DB_PATH override (Windows dev path → our DuckDB) before ANY import
+  - FRAMMER_CHART_DIR set to backend/data/charts/ so charts persist and are serveable
+  - Clean JSON response covering all NLPResult fields including new agent fields
+  - PNG chart serving from backend/data/charts/
 """
 
-import json
-import asyncio
-import logging
 import os
 import sys
-import time
+import logging
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Correct sys.path — resolve relative to this file's location
-# ─────────────────────────────────────────────────────────────────────────────
-
+# ── Paths ─────────────────────────────────────────────────────────────────────
 _BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _NLP_ROOT     = os.path.join(_BACKEND_ROOT, "nlp_frammer")
 
-if _BACKEND_ROOT not in sys.path:
-    sys.path.insert(0, _BACKEND_ROOT)
 if _NLP_ROOT not in sys.path:
     sys.path.insert(0, _NLP_ROOT)
 
-from nlp_frammer.nlp.engine import query as nlp_query
+# ── Set env vars BEFORE importing any NLP modules ─────────────────────────────
+# 1. FRAMMER_DB_PATH — executor.py reads this lazily but we set it early too
+#    to handle any module-level reads.
+from config import DATABASE_PATH as _OUR_DB
+os.environ["FRAMMER_DB_PATH"] = _OUR_DB
 
-logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api", tags=["chat"])
+# 2. FRAMMER_CHART_DIR — chart_generator.py reads this at module load.
+#    Set to backend/data/charts/ so charts persist across restarts and
+#    can be served by this file's GET endpoint.
+_CHART_DIR = os.path.join(_BACKEND_ROOT, "data", "charts")
+os.makedirs(_CHART_DIR, exist_ok=True)
+os.environ["FRAMMER_CHART_DIR"] = _CHART_DIR
+
+# ── Now safe to import NLP ────────────────────────────────────────────────────
+from nlp_frammer.nlp.engine import query, NLPResult
+
+router    = APIRouter(prefix="/api", tags=["chat"])
+logger    = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Request / Response Models
+# Request / Response models
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
     question: str
-    debug: bool = False
 
 
 class ChatResponse(BaseModel):
-    success:          bool
-    question:         str
-    sql:              str | None
-    data:             list[dict]
-    row_count:        int
-    insight:          str | None
-    chart_json:       dict | None   # Plotly JSON — frontend renders with Plotly.js
-    chart_type:       str | None
-    cannot_answer:    bool
-    error:            str | None
+    # Pipeline status
+    success:         bool
+    question:        str
+
+    # SQL + data
+    sql:             str
+    data:            list[dict]
+    row_count:       int
+
+    # Agent outputs
+    insight:         str | None   # Gemini natural language synthesis
+    message:         str | None   # Final user-facing message from agent
+                                  #   (clarification question or cannot_answer text)
+    needs_input:     bool         # True = agent is asking a follow-up question
+    cannot_answer:   bool         # True = question is out of scope
+
+    # Chart
+    chart_url:       str | None   # e.g. /api/chat/chart/<id>.png
+    chart_type:      str | None   # "line", "bar", "heatmap", "dual_axis"
+
+    # Debug / metadata
+    error:           str | None
     retrieved_tables: list[str]
-    took_ms:          int
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# POST /api/chat  — Standard (full response)
+# POST /api/chat
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     """
-    Submit a natural language question and receive the full analytics result.
+    Full NLP pipeline:
+      1. ChromaDB retrieval  — schema + metric + few-shot examples
+      2. LangGraph agent     — Gemini SQL generation with entity resolution,
+                               DuckDB execution, empty-result handling
+      3. Gemini synthesis    — natural language insight from result rows
+      4. Chart generation    — Plotly PNG saved to backend/data/charts/
 
-    Returns:
-      - sql:        The generated DuckDB SQL
-      - data:       Query result rows (list of dicts)
-      - insight:    Gemini-synthesised natural language answer with explainability
-      - chart_json: Plotly chart spec (pass directly to Plotly.js react component)
-      - chart_type: e.g. "bar", "line", "heatmap", "dual_axis", "pie"
+    If the agent needs clarification (e.g. ambiguous user name):
+      → success=False, needs_input=True, message="Did you mean X or Y?"
+
+    If the question is out of scope:
+      → success=False, cannot_answer=True, message="<reason> | <suggestion>"
     """
-    if not req.question.strip():
+    question = req.question.strip()
+    if not question:
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
-    t0     = time.monotonic()
-    result = nlp_query(req.question.strip(), debug=req.debug)
-    took   = int((time.monotonic() - t0) * 1000)
+    logger.info(f"[chat] {question!r}")
 
-    # chart_path is now a dict (Plotly JSON) from the new chart_generator.py
-    # Handle both old (str path) and new (dict) for backward compat
-    chart_json = None
-    if result.chart_path is not None:
-        if isinstance(result.chart_path, dict):
-            chart_json = result.chart_path
-        else:
-            # Legacy PNG path — skip (not usable by frontend)
-            logger.warning("[chat] chart_path is a file path, not Plotly JSON — skipped")
+    try:
+        result: NLPResult = query(question)
+    except Exception as e:
+        logger.error(f"[chat] Pipeline crashed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"NLP error: {e}")
+
+    # Build chart URL — served from backend/data/charts/ via GET /api/chat/chart/<id>
+    chart_url = None
+    if result.chart_path and os.path.exists(result.chart_path):
+        chart_url = f"/api/chat/chart/{os.path.basename(result.chart_path)}"
+        logger.info(f"[chat] Chart: {result.chart_type} → {chart_url}")
 
     return ChatResponse(
         success          = result.success,
         question         = result.query,
-        sql              = result.sql or None,
+        sql              = result.sql or "",
         data             = result.data,
         row_count        = result.row_count,
         insight          = result.insight,
-        chart_json       = chart_json,
-        chart_type       = result.chart_type,
+        message          = result.message,          # agent clarification / cannot_answer text
+        needs_input      = result.needs_input,      # True = agent asked a question
         cannot_answer    = result.cannot_answer,
+        chart_url        = chart_url,
+        chart_type       = result.chart_type,
         error            = result.error,
         retrieved_tables = result.retrieved_tables,
-        took_ms          = took,
     )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GET /api/chat/stream  — SSE Streaming (for live dashboard chatbot)
+# GET /api/chat/chart/{chart_id}
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _sse(event: str, data: dict) -> str:
-    """Format a single SSE message."""
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
-
-
-@router.get("/chat/stream")
-def chat_stream(
-    question: str = Query(..., description="Natural language question"),
-):
+@router.get("/chat/chart/{chart_id}")
+def get_chart(chart_id: str):
     """
-    Server-Sent Events endpoint for the live chatbot UI.
-
-    The frontend opens an EventSource to this endpoint and receives
-    progressive updates as each pipeline stage completes:
-
-      thinking      → "Analysing your question…"
-      sql_ready     → { sql: "SELECT …" }
-      data_ready    → { rows: [...], row_count: N }
-      insight_ready → { insight: "The top channel is …" }
-      chart_ready   → { chart_json: {...}, chart_type: "bar" }
-      done          → { took_ms: N, retrieved_tables: [...] }
-      error         → { message: "…" }
-
-    Frontend usage (JavaScript):
-        const es = new EventSource(`/api/chat/stream?question=...`);
-        es.addEventListener("sql_ready",     e => console.log(JSON.parse(e.data)));
-        es.addEventListener("insight_ready", e => showInsight(JSON.parse(e.data).insight));
-        es.addEventListener("chart_ready",   e => renderPlotly(JSON.parse(e.data).chart_json));
-        es.addEventListener("done",          e => es.close());
+    Serve a generated Plotly chart PNG.
+    chart_id = filename e.g. "3f2a1b4c.png"
+    Charts are stored in backend/data/charts/ (set via FRAMMER_CHART_DIR).
     """
-    if not question.strip():
-        raise HTTPException(status_code=400, detail="question cannot be empty.")
+    # Sanitise — prevent path traversal
+    if ".." in chart_id or "/" in chart_id or "\\" in chart_id:
+        raise HTTPException(status_code=400, detail="Invalid chart ID.")
 
-    async def stream():
-        t0 = time.monotonic()
+    path = os.path.join(_CHART_DIR, chart_id)
 
-        yield _sse("thinking", {"message": "Analysing your question…"})
-
-        # Run NLP pipeline in a thread so we don't block the event loop
-        loop   = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None, lambda: nlp_query(question.strip(), debug=False)
+    if not os.path.exists(path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chart '{chart_id}' not found. It may not have been generated yet."
         )
 
-        took = int((time.monotonic() - t0) * 1000)
-
-        # ── Cannot answer ─────────────────────────────────────────────
-        if result.cannot_answer:
-            yield _sse("error", {
-                "message"     : result.error or "This question cannot be answered with the available data.",
-                "cannot_answer": True,
-            })
-            yield _sse("done", {"took_ms": took})
-            return
-
-        # ── Pipeline failed ───────────────────────────────────────────
-        if not result.success:
-            yield _sse("error", {
-                "message"      : result.error or "An error occurred processing your question.",
-                "cannot_answer": False,
-                "sql"          : result.sql or None,
-            })
-            yield _sse("done", {"took_ms": took})
-            return
-
-        # ── SQL ready ─────────────────────────────────────────────────
-        yield _sse("sql_ready", {"sql": result.sql})
-
-        # ── Data ready ───────────────────────────────────────────────
-        yield _sse("data_ready", {
-            "rows"      : result.data,
-            "row_count" : result.row_count,
-        })
-
-        # ── Insight ready ────────────────────────────────────────────
-        if result.insight:
-            yield _sse("insight_ready", {"insight": result.insight})
-
-        # ── Chart ready ──────────────────────────────────────────────
-        chart_json = None
-        if result.chart_path is not None:
-            if isinstance(result.chart_path, dict):
-                chart_json = result.chart_path
-
-        if chart_json:
-            yield _sse("chart_ready", {
-                "chart_json": chart_json,
-                "chart_type": result.chart_type,
-            })
-
-        # ── Done ─────────────────────────────────────────────────────
-        yield _sse("done", {
-            "took_ms"         : took,
-            "retrieved_tables": result.retrieved_tables,
-        })
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control" : "no-cache",
-            "X-Accel-Buffering": "no",  # disable nginx buffering
-        },
+    return FileResponse(
+        path,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=3600"},
     )
