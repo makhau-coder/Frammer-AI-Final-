@@ -6,9 +6,7 @@ services:
       pip install --upgrade pip &&
       pip install --only-binary=duckdb,pandas,numpy duckdb==1.1.3 pandas==2.2.3 numpy &&
       pip install -r requirements.txt
-    startCommand: uvicorn api.main:app --host 0.0.0.0 --port 10000
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: PORT
-        value: 10000
       - key: ENV
         value: production
