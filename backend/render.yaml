@@ -2,8 +2,13 @@ services:
   - type: web
     name: frammer-backend
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: >-
+      pip install --only-binary=duckdb duckdb==1.1.3 &&
+      pip install -r requirements.txt &&
+      pip install -r nlp_frammer/requirements.txt
     startCommand: uvicorn api.main:app --host 0.0.0.0 --port 10000
     envVars:
       - key: PORT
         value: 10000
+      - key: ENV
+        value: production

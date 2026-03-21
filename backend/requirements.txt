@@ -1,6 +1,6 @@
-pandas
+pandas==2.2.3
 numpy
-duckdb
+duckdb==1.1.3
 fastapi
 uvicorn
 pydantic
@@ -10,7 +10,7 @@ sqlalchemy
 langchain
 openai
 faiss-cpu
-sentence-transformers
+sentence-transformers>=3.0.0
 matplotlib
 seaborn
 jupyter

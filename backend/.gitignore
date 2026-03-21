@@ -3,21 +3,23 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Data
-data/raw/*
-data/processed/*
-!data/raw/.keep
-!data/processed/.keep
+# Data — CSVs, Parquets, and ChromaDB index are small and committed
+# Only ignore generated chart PNGs (they are regenerated at runtime)
+data/charts/*
+!data/charts/.keep
+
 # dashboard
 dashboard/
-# Environment
+
+# Environment — never commit secrets
 .env
 venv/
 
 # Jupyter
 .ipynb_checkpoints/
 
-# Database
+# Database files inside database/ subfolder only
+# (frammer_analytics.duckdb and registry.db in the root ARE committed)
 database/*.db
 
 # OS
