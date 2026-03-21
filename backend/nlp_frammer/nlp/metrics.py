@@ -1058,5 +1058,147 @@ Example SQL (most efficient real user with >= 1 publish):
     LIMIT 1;
 """
     },
+# ──────────────────────────────────────────────────────────────────
+# CROSS-DIMENSIONAL METRICS (STAR SCHEMA)
+# ──────────────────────────────────────────────────────────────────
+
+{
+"id": "metric_user_x_platform",
+"type": "metric",
+"tables": ["fact_video", "dim_user", "dim_platform"],
+"text": """
+Metric: User × Platform Cross-Dimensional Breakdown
+Definition:
+Created and published video counts broken down by both User AND Platform.
+Answers: "Which platform does each user publish to most?" or
+"How many videos did user X create for YouTube?"
+
+SOURCE: fact_video JOIN dim_user JOIN dim_platform
+AVAILABLE METRICS: Created count (COUNT(*)), Published count (COUNT WHERE is_published=TRUE)
+NOT AVAILABLE: Upload counts — fact_video has no upload data. Do NOT include uploads.
+
+Always exclude QA accounts: WHERE dim_user.is_qa_account = FALSE
+
+Example SQL (created and published by user × platform):
+SELECT
+  dim_user.user_name,
+  dim_platform.platform_name,
+  COUNT(*) AS created_count,
+  COUNT(*) FILTER (WHERE fact_video.is_published = TRUE) AS published_count,
+  ROUND(
+    COUNT(*) FILTER (WHERE fact_video.is_published = TRUE) * 100.0
+    / NULLIF(COUNT(*), 0), 2
+  ) AS publish_rate_pct
+FROM fact_video
+JOIN dim_user     ON fact_video.user_id     = dim_user.user_id
+JOIN dim_platform ON fact_video.platform_id = dim_platform.platform_id
+WHERE dim_user.is_qa_account = FALSE
+GROUP BY dim_user.user_name, dim_platform.platform_name
+ORDER BY dim_user.user_name, created_count DESC;
+
+Example SQL (top platform per user):
+SELECT dim_user.user_name, dim_platform.platform_name, COUNT(*) AS created_count
+FROM fact_video
+JOIN dim_user     ON fact_video.user_id     = dim_user.user_id
+JOIN dim_platform ON fact_video.platform_id = dim_platform.platform_id
+WHERE dim_user.is_qa_account = FALSE
+GROUP BY dim_user.user_name, dim_platform.platform_name
+QUALIFY ROW_NUMBER() OVER (
+  PARTITION BY dim_user.user_name
+  ORDER BY COUNT(*) DESC
+) = 1
+ORDER BY dim_user.user_name;
+"""
+},
+
+{
+"id": "metric_user_x_input_type",
+"type": "metric",
+"tables": ["fact_video", "dim_user", "dim_input_type"],
+"text": """
+Metric: User × Input Type Cross-Dimensional Breakdown
+Definition:
+Created and published video counts broken down by both User AND Input Type.
+Answers: "Which input type does each user work with most?" or
+"How many videos did user X create from audio content?"
+
+SOURCE: fact_video JOIN dim_user JOIN dim_input_type
+AVAILABLE METRICS: Created count, Published count, Publish rate
+NOT AVAILABLE: Upload counts — fact_video has no upload data. Do NOT include uploads.
+
+Always exclude QA accounts: WHERE dim_user.is_qa_account = FALSE
+
+Example SQL (created and published by user × input type):
+SELECT
+  dim_user.user_name,
+  dim_input_type.input_type_name,
+  COUNT(*) AS created_count,
+  COUNT(*) FILTER (WHERE fact_video.is_published = TRUE) AS published_count,
+  ROUND(
+    COUNT(*) FILTER (WHERE fact_video.is_published = TRUE) * 100.0
+    / NULLIF(COUNT(*), 0), 2
+  ) AS publish_rate_pct
+FROM fact_video
+JOIN dim_user       ON fact_video.user_id       = dim_user.user_id
+JOIN dim_input_type ON fact_video.input_type_id = dim_input_type.input_type_id
+WHERE dim_user.is_qa_account = FALSE
+GROUP BY dim_user.user_name, dim_input_type.input_type_name
+ORDER BY dim_user.user_name, created_count DESC;
+
+Example SQL (dominant input type per user):
+SELECT dim_user.user_name, dim_input_type.input_type_name, COUNT(*) AS created_count
+FROM fact_video
+JOIN dim_user       ON fact_video.user_id       = dim_user.user_id
+JOIN dim_input_type ON fact_video.input_type_id = dim_input_type.input_type_id
+WHERE dim_user.is_qa_account = FALSE
+GROUP BY dim_user.user_name, dim_input_type.input_type_name
+QUALIFY ROW_NUMBER() OVER (
+  PARTITION BY dim_user.user_name
+  ORDER BY COUNT(*) DESC
+) = 1
+ORDER BY dim_user.user_name;
+"""
+},
+
+{
+"id": "metric_cross_dim_cannot_answer",
+"type": "metric",
+"tables": [],
+"text": """
+Cross-Dimensional Queries — CANNOT_ANSWER Cases:
+
+The following dimension pairs are NOT available in any table (flat or star schema).
+If a user requests these breakdowns, respond with CANNOT_ANSWER.
+
+1. Channel × Input Type
+   CANNOT_ANSWER: Channel × Input Type breakdown is not available in any table.
+   Suggestions: Channel breakdown (client_1_combined_data) | Input type breakdown (combined_data_by_input_type) | User × Input Type (via star schema)
+
+2. Channel × Language
+   CANNOT_ANSWER: Channel × Language breakdown is not available in any table.
+   Suggestions: Language breakdown (combined_data_by_language) | Channel breakdown (client_1_combined_data)
+
+3. Channel × Output Type
+   CANNOT_ANSWER: Channel × Output Type breakdown is not available.
+   Suggestions: Output type breakdown (combined_data_by_output_type) | Channel breakdown (client_1_combined_data)
+
+4. Input Type × Output Type
+   CANNOT_ANSWER: Input Type × Output Type breakdown is not available.
+   Suggestions: Input type breakdown | Output type breakdown (separately)
+
+5. Language × any other dimension
+   CANNOT_ANSWER: Language can only be queried as a standalone dimension.
+   Suggestions: Language breakdown (combined_data_by_language)
+
+6. Upload counts in User × Platform or User × InputType
+   CANNOT_ANSWER for the upload metric specifically.
+   Provide created/published counts from fact_video instead, and note that
+   upload data is not available at this dimension cross-section.
+
+7. Any dimension pair involving Team
+   CANNOT_ANSWER: Team data is always 'Unknown' — team analysis is not possible.
+"""
+},
+
 
 ]

@@ -26,6 +26,7 @@ import { Button }     from '@/components/ui/button';
 import { Input }      from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { BASE_URL }   from '@/lib/api';
+import ReactMarkdown  from 'react-markdown';
 
 // ─── Lazy-load Plotly ─────────────────────────────────────────────────────────
 let PlotlyComponent = null;
@@ -203,8 +204,16 @@ function PlotlyChart({ chartJson, chartType, sizeMode }) {
 function InsightBubble({ insight }) {
   if (!insight) return null;
   return (
-    <div className="mr-auto max-w-[90%] rounded-lg bg-secondary px-3 py-2 text-xs leading-relaxed text-secondary-foreground whitespace-pre-wrap">
-      {insight}
+    <div className="mr-auto max-w-[90%] rounded-lg bg-secondary px-3 py-2.5 text-xs text-secondary-foreground">
+      <div className="prose prose-xs prose-invert max-w-none
+        prose-p:text-secondary-foreground prose-p:leading-relaxed prose-p:my-1 prose-p:text-xs
+        prose-strong:text-foreground prose-strong:font-semibold
+        prose-ul:my-1 prose-ul:pl-3.5 prose-li:my-0.5 prose-li:text-xs prose-li:text-secondary-foreground
+        prose-ol:my-1 prose-ol:pl-3.5
+        prose-h3:text-xs prose-h3:font-semibold prose-h3:text-foreground prose-h3:mt-2 prose-h3:mb-0.5
+        prose-code:text-indigo-300 prose-code:bg-muted/40 prose-code:px-0.5 prose-code:rounded prose-code:text-[11px]">
+        <ReactMarkdown>{insight}</ReactMarkdown>
+      </div>
     </div>
   );
 }

@@ -1068,17 +1068,6 @@ CANNOT_ANSWER: No financial or revenue data exists in this dataset.
     },
 
     {
-        "id": "ex_cannot_team",
-        "type": "example",
-        "tables": [],
-        "text": """
-Question: Which team published the most clips?
-SQL:
-CANNOT_ANSWER: Team data is not available — all team_name values in the dataset are 'Unknown'. | Which channel published the most clips? | Which user published the most clips? | What is the publish rate per channel?
-"""
-    },
-
-    {
         "id": "ex_cannot_date_range",
         "type": "example",
         "tables": [],
@@ -1110,6 +1099,196 @@ CANNOT_ANSWER: The dataset only covers March 2025 to February 2026. March 2026 d
 Question: What was the upload count in January 2024?
 SQL:
 CANNOT_ANSWER: The dataset only covers March 2025 to February 2026. January 2024 data is not available.
+"""
+    },
+# ──────────────────────────────────────────────────────────────────
+# CROSS-DIMENSIONAL QUERIES — STAR SCHEMA
+# ──────────────────────────────────────────────────────────────────
+
+{
+"id": "ex_user_x_platform_breakdown",
+"type": "example",
+"tables": ["fact_video", "dim_user", "dim_platform"],
+"text": """
+Question: Show me created and published video counts broken down by user and platform.
+SQL:
+SELECT
+  dim_user.user_name,
+  dim_platform.platform_name,
+  COUNT(*) AS created_count,
+  COUNT(*) FILTER (WHERE fact_video.is_published = TRUE) AS published_count,
+  ROUND(
+    COUNT(*) FILTER (WHERE fact_video.is_published = TRUE) * 100.0
+    / NULLIF(COUNT(*), 0), 2
+  ) AS publish_rate_pct
+FROM fact_video
+JOIN dim_user     ON fact_video.user_id     = dim_user.user_id
+JOIN dim_platform ON fact_video.platform_id = dim_platform.platform_id
+WHERE dim_user.is_qa_account = FALSE
+GROUP BY dim_user.user_name, dim_platform.platform_name
+ORDER BY dim_user.user_name, created_count DESC;
+"""
+},
+
+{
+"id": "ex_user_x_platform_top_platform",
+"type": "example",
+"tables": ["fact_video", "dim_user", "dim_platform"],
+"text": """
+Question: Which platform does each user publish to most?
+SQL:
+SELECT dim_user.user_name, dim_platform.platform_name,
+  COUNT(*) FILTER (WHERE fact_video.is_published = TRUE) AS published_count
+FROM fact_video
+JOIN dim_user     ON fact_video.user_id     = dim_user.user_id
+JOIN dim_platform ON fact_video.platform_id = dim_platform.platform_id
+WHERE dim_user.is_qa_account = FALSE
+  AND fact_video.is_published = TRUE
+GROUP BY dim_user.user_name, dim_platform.platform_name
+QUALIFY ROW_NUMBER() OVER (
+  PARTITION BY dim_user.user_name
+  ORDER BY COUNT(*) DESC
+) = 1
+ORDER BY dim_user.user_name;
+"""
+},
+
+{
+"id": "ex_specific_user_platform",
+"type": "example",
+"tables": ["fact_video", "dim_user", "dim_platform"],
+"text": """
+Question: How many videos did Chandan create and publish for each platform?
+SQL:
+SELECT
+  dim_platform.platform_name,
+  COUNT(*) AS created_count,
+  COUNT(*) FILTER (WHERE fact_video.is_published = TRUE) AS published_count
+FROM fact_video
+JOIN dim_user     ON fact_video.user_id     = dim_user.user_id
+JOIN dim_platform ON fact_video.platform_id = dim_platform.platform_id
+WHERE dim_user.user_name = 'Chandan'
+  AND dim_user.is_qa_account = FALSE
+GROUP BY dim_platform.platform_name
+ORDER BY created_count DESC;
+"""
+},
+
+{
+"id": "ex_user_x_input_type_breakdown",
+"type": "example",
+"tables": ["fact_video", "dim_user", "dim_input_type"],
+"text": """
+Question: Show me created and published counts by user and input type.
+SQL:
+SELECT
+  dim_user.user_name,
+  dim_input_type.input_type_name,
+  COUNT(*) AS created_count,
+  COUNT(*) FILTER (WHERE fact_video.is_published = TRUE) AS published_count,
+  ROUND(
+    COUNT(*) FILTER (WHERE fact_video.is_published = TRUE) * 100.0
+    / NULLIF(COUNT(*), 0), 2
+  ) AS publish_rate_pct
+FROM fact_video
+JOIN dim_user       ON fact_video.user_id       = dim_user.user_id
+JOIN dim_input_type ON fact_video.input_type_id = dim_input_type.input_type_id
+WHERE dim_user.is_qa_account = FALSE
+GROUP BY dim_user.user_name, dim_input_type.input_type_name
+ORDER BY dim_user.user_name, created_count DESC;
+"""
+},
+
+{
+"id": "ex_user_x_input_type_dominant",
+"type": "example",
+"tables": ["fact_video", "dim_user", "dim_input_type"],
+"text": """
+Question: Which input type does each user work with most?
+SQL:
+SELECT dim_user.user_name, dim_input_type.input_type_name,
+  COUNT(*) AS created_count
+FROM fact_video
+JOIN dim_user       ON fact_video.user_id       = dim_user.user_id
+JOIN dim_input_type ON fact_video.input_type_id = dim_input_type.input_type_id
+WHERE dim_user.is_qa_account = FALSE
+GROUP BY dim_user.user_name, dim_input_type.input_type_name
+QUALIFY ROW_NUMBER() OVER (
+  PARTITION BY dim_user.user_name
+  ORDER BY COUNT(*) DESC
+) = 1
+ORDER BY dim_user.user_name;
+"""
+},
+
+{
+"id": "ex_specific_user_input_type",
+"type": "example",
+"tables": ["fact_video", "dim_user", "dim_input_type"],
+"text": """
+Question: What input types does Neha work with and how many videos did she create per type?
+SQL:
+SELECT
+  dim_input_type.input_type_name,
+  COUNT(*) AS created_count,
+  COUNT(*) FILTER (WHERE fact_video.is_published = TRUE) AS published_count
+FROM fact_video
+JOIN dim_user       ON fact_video.user_id       = dim_user.user_id
+JOIN dim_input_type ON fact_video.input_type_id = dim_input_type.input_type_id
+WHERE dim_user.user_name = 'Neha'
+  AND dim_user.is_qa_account = FALSE
+GROUP BY dim_input_type.input_type_name
+ORDER BY created_count DESC;
+"""
+},
+
+{
+"id": "ex_cannot_channel_x_input_type",
+"type": "example",
+"tables": [],
+"text": """
+Question: Show me upload and creation counts broken down by channel and input type.
+SQL:
+CANNOT_ANSWER: Channel × Input Type cross-breakdown is not available in any table.
+| View channels separately: SELECT FROM client_1_combined_data2025_3_1_2026_2_28
+| View input types separately: SELECT FROM combined_data2025_3_1_2026_2_28_by_input_type
+| View User × Input Type: JOIN fact_video with dim_user and dim_input_type
+"""
+},
+
+{
+"id": "ex_cannot_user_x_platform_uploads",
+"type": "example",
+"tables": [],
+"text": """
+Question: How many videos did each user upload per platform?
+SQL:
+CANNOT_ANSWER: Upload counts broken down by both User and Platform are not available. The star schema (fact_video) only records created and published videos — it has no upload data. Upload counts are only available as single-dimension summaries (by user or by platform separately).
+| View uploads by user: SELECT FROM combined_data2025_3_1_2026_2_28_by_user
+| View created/published by user × platform: JOIN fact_video with dim_user and dim_platform
+"""
+},
+
+{
+"id": "ex_cannot_channel_x_language",
+"type": "example",
+"tables": [],
+"text": """
+Question: Which language does each channel use most?
+SQL:
+CANNOT_ANSWER: Channel × Language cross-breakdown is not available in any table.
+| View language breakdown overall: SELECT FROM combined_data2025_3_1_2026_2_28_by_language
+| View channel breakdown overall: SELECT FROM client_1_combined_data2025_3_1_2026_2_28
+"""
+},
+    {
+        "id": "ex_cannot_team",
+        "type": "example",
+        "tables": [],
+        "text": """
+Question: Which team published the most clips?
+SQL:
+CANNOT_ANSWER: Team data is not available — all team_name values in the dataset are 'Unknown'. | Which channel published the most clips? | Which user published the most clips? | What is the publish rate per channel?
 """
     },
 

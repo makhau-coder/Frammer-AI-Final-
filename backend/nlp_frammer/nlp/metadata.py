@@ -618,5 +618,222 @@ Limitation: No financial, revenue, or cost data exists.
 If a user asks about money, revenue, cost, or ROI → CANNOT_ANSWER.
 """
     },
+# ──────────────────────────────────────────────────────────────────
+# STAR SCHEMA — DIMENSION TABLES
+# ──────────────────────────────────────────────────────────────────
+
+{
+"id": "table_dim_user",
+"type": "table",
+"tables": ["dim_user"],
+"text": """
+Table: dim_user
+Layer: Star Schema — Dimension Table
+Description:
+User dimension. One row per user.
+Join to fact_video on dim_user.user_id = fact_video.user_id.
+
+Columns:
+- user_id (INTEGER): Primary key.
+- user_name (VARCHAR): Display name of the user.
+- is_qa_account (BOOLEAN): TRUE for QA/test accounts. Always filter these out
+  with WHERE dim_user.is_qa_account = FALSE.
+
+IMPORTANT: This table does NOT contain upload or created/published counts.
+All counts must be derived by aggregating fact_video.
+"""
+},
+
+{
+"id": "table_dim_input_type",
+"type": "table",
+"tables": ["dim_input_type"],
+"text": """
+Table: dim_input_type
+Layer: Star Schema — Dimension Table
+Description:
+Input type dimension. One row per input type (source content type).
+Join to fact_video on dim_input_type.input_type_id = fact_video.input_type_id.
+
+Columns:
+- input_type_id (INTEGER): Primary key.
+- input_type_name (VARCHAR): Human-readable input type label.
+"""
+},
+
+{
+"id": "table_dim_platform",
+"type": "table",
+"tables": ["dim_platform"],
+"text": """
+Table: dim_platform
+Layer: Star Schema — Dimension Table
+Description:
+Platform dimension. One row per publishing platform (YouTube, Instagram, etc.).
+Join to fact_video on dim_platform.platform_id = fact_video.platform_id.
+
+Columns:
+- platform_id (INTEGER): Primary key.
+- platform_name (VARCHAR): Platform name e.g. 'Youtube', 'Instagram'.
+"""
+},
+
+{
+"id": "table_dim_team",
+"type": "table",
+"tables": ["dim_team"],
+"text": """
+Table: dim_team
+Layer: Star Schema — Dimension Table
+Description:
+Team dimension. Currently all rows in fact_video map to 'Unknown'.
+Team-level analysis is NOT possible — always CANNOT_ANSWER for team queries.
+
+Columns:
+- team_id (INTEGER): Primary key.
+- team_name (VARCHAR): Always 'Unknown' for all rows in this dataset.
+"""
+},
+
+# ──────────────────────────────────────────────────────────────────
+# STAR SCHEMA — FACT TABLE
+# ──────────────────────────────────────────────────────────────────
+
+{
+"id": "table_fact_video",
+"type": "table",
+"tables": ["fact_video"],
+"text": """
+Table: fact_video
+Layer: Star Schema — Fact Table
+Description:
+One row per CREATED video output. Contains every video Frammer generated,
+with a flag indicating whether it was published.
+
+CRITICAL CONSTRAINTS — READ CAREFULLY:
+1. fact_video contains CREATED videos only. It has NO upload information
+   whatsoever. Do NOT derive upload counts from this table.
+2. Published videos are those WHERE is_published = TRUE.
+3. Created count = COUNT(*) on fact_video (all rows = all created videos).
+4. Published count = COUNT(*) FILTER (WHERE is_published = TRUE).
+5. Upload counts CANNOT come from fact_video. Use flat summary tables instead.
+6. NEVER use star schema tables for breakdowns that flat tables already cover:
+   - Channel × User → use combined_data2025_3_1_2026_2_28_by_channel_and_user
+   - Channel (overall) → use client_1_combined_data2025_3_1_2026_2_28
+   - Platform by channel → use channel_wise_publishing
+
+Columns:
+- video_id (VARCHAR): Unique identifier for the created video.
+- headline (VARCHAR): Title of the video.
+- user_id (INTEGER): FK → dim_user.user_id
+- input_type_id (INTEGER): FK → dim_input_type.input_type_id
+- platform_id (INTEGER): FK → dim_platform.platform_id
+- team_id (INTEGER): FK → dim_team.team_id (always maps to 'Unknown')
+- is_published (BOOLEAN): TRUE if this video was published.
+
+Joins:
+- fact_video JOIN dim_user ON fact_video.user_id = dim_user.user_id
+- fact_video JOIN dim_input_type ON fact_video.input_type_id = dim_input_type.input_type_id
+- fact_video JOIN dim_platform ON fact_video.platform_id = dim_platform.platform_id
+
+Always exclude QA accounts:
+WHERE dim_user.is_qa_account = FALSE
+
+Use this table ONLY for cross-dimensional breakdowns not available in flat tables:
+- User × Platform (created and published counts only — no uploads)
+- User × InputType (created and published counts only — no uploads)
+"""
+},
+
+# ──────────────────────────────────────────────────────────────────
+# STAR SCHEMA — RELATIONSHIPS
+# ──────────────────────────────────────────────────────────────────
+
+{
+"id": "relationship_star_schema",
+"type": "relationship",
+"tables": ["fact_video", "dim_user", "dim_input_type", "dim_platform", "dim_team"],
+"text": """
+Star Schema Relationships:
+
+fact_video is the central fact table. Join to dimensions as follows:
+
+fact_video JOIN dim_user      ON fact_video.user_id       = dim_user.user_id
+fact_video JOIN dim_input_type ON fact_video.input_type_id = dim_input_type.input_type_id
+fact_video JOIN dim_platform   ON fact_video.platform_id   = dim_platform.platform_id
+fact_video JOIN dim_team       ON fact_video.team_id        = dim_team.team_id
+
+DECISION TREE — which layer to use for cross-dimensional queries:
+
+┌─────────────────────────────────────────────────────────┐
+│ Dimension pair requested                                │
+├─────────────────────────────────────────────────────────┤
+│ Channel × User (any metric)                            │
+│ → USE: combined_data2025_3_1_2026_2_28_by_channel_and_user │
+├─────────────────────────────────────────────────────────┤
+│ Channel × Platform (published counts/duration)         │
+│ → USE: channel_wise_publishing / _duration             │
+├─────────────────────────────────────────────────────────┤
+│ User × Platform (created/published counts)             │
+│ → USE: fact_video JOIN dim_user JOIN dim_platform      │
+│   NOTE: Uploads NOT available — do not include         │
+├─────────────────────────────────────────────────────────┤
+│ User × InputType (created/published counts)            │
+│ → USE: fact_video JOIN dim_user JOIN dim_input_type    │
+│   NOTE: Uploads NOT available — do not include         │
+├─────────────────────────────────────────────────────────┤
+│ Channel × InputType                                    │
+│ → CANNOT_ANSWER: Not available in flat tables or star schema │
+├─────────────────────────────────────────────────────────┤
+│ Channel × Language                                     │
+│ → CANNOT_ANSWER: Not available in any table            │
+├─────────────────────────────────────────────────────────┤
+│ InputType × OutputType                                 │
+│ → CANNOT_ANSWER: Not available in any table            │
+├─────────────────────────────────────────────────────────┤
+│ Any pair involving team breakdown                      │
+│ → CANNOT_ANSWER: Team data always 'Unknown'            │
+└─────────────────────────────────────────────────────────┘
+
+UPLOAD COUNTS IN CROSS-DIMENSIONAL QUERIES:
+Upload data is ONLY in the flat summary tables. The star schema (fact_video)
+has NO upload information. If a cross-dimensional query asks for uploads
+in a dimension pair not covered by flat tables → CANNOT_ANSWER for uploads,
+but you MAY still answer for created/published if the pair is supported.
+"""
+},
+
+# ──────────────────────────────────────────────────────────────────
+# LIMITATIONS — STAR SCHEMA
+# ──────────────────────────────────────────────────────────────────
+
+{
+"id": "limitation_star_schema_usage",
+"type": "limitation",
+"tables": ["fact_video"],
+"text": """
+Limitation: Star schema tables must NOT be used when flat tables already cover the breakdown.
+
+ALWAYS prefer flat summary tables for these dimensions:
+- Single dimension (channel, user, input type, output type, language, month) → always flat tables
+- Channel × User → combined_data2025_3_1_2026_2_28_by_channel_and_user
+- Channel × Platform (publishing) → channel_wise_publishing / channel_wise_publishing_duration
+
+Star schema (fact_video + dims) is ONLY for:
+- User × Platform cross-breakdown
+- User × InputType cross-breakdown
+
+Star schema NEVER provides:
+- Upload counts (fact_video has no upload data)
+- Monthly breakdowns (fact_video has no date column)
+- Language breakdowns (no language dimension in schema)
+- OutputType breakdowns (no output type dimension in fact_video)
+- Channel × InputType (not joinable)
+- Channel × Language (not joinable)
+
+If a user asks for a dimension pair not supported by flat tables OR star schema:
+→ CANNOT_ANSWER with a clear explanation and list what IS available.
+"""
+},
 
 ]

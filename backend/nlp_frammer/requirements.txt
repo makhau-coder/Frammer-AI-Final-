@@ -9,3 +9,6 @@ kaleido
 langgraph>=0.2.0
 langchain-core>=0.3.0
 langchain-google-genai>=2.0.0
+# cross-encoder reranker — added for two-stage retrieval in retriever.py
+# model: cross-encoder/ms-marco-MiniLM-L-6-v2 (~85MB, downloaded on first use)
+# sentence-transformers already required above and includes CrossEncoder

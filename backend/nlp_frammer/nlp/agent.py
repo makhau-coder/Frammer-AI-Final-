@@ -1,24 +1,31 @@
 # nlp/agent.py
 #
-# FIXES applied in this version:
-#   1. _get_llm_plain() max_output_tokens: 256 → 1024
-#      Old value was too small for node_handle_empty_results which asks Gemini
-#      to list ALL known entity values — responses were truncated mid-sentence.
+# FULLY MERGED — all three versions combined:
 #
-#   2. Low-confidence fuzzy match cutoff: 0.2 → 0.35
-#      A cutoff of 0.2 matched almost any word against any entity name,
-#      generating false "ASK CONFIRMATION" prompts for unrelated words.
+# From YOUR backend version:
+#   - thread_id parameter on run() — per-session LangGraph isolation (CRITICAL)
+#   - fuzzy match cutoff 0.2 → 0.35 (prevents false confirmation prompts)
+#   - Windows drive-letter guard on FRAMMER_DB_PATH (C:, D:, E:, ...)
+#   - _get_llm_plain() max_output_tokens 256 → 1024
+#   - Month normalisation: "february" → "Feb, 2026" (no-year resolution)
+#   - Language normalisation: "hindi" → "hi"
+#   - Channel letter rescue: single-letter channel names preserved
 #
-#   3. Windows path guard: now covers ALL drive letters (C:, D:, E:, ...)
-#      The old guard only checked raw.startswith("C:") and silently failed
-#      for projects on D:, E:, or any other drive letter.
+# From FRIEND2 / LAST version:
+#   - thinking_budget=0 on _get_llm_plain() — faster responses
+#   - _get_llm_classifier() — micro LLM for GENERAL/DATA routing (8 tokens)
+#   - is_general_answer field on AgentState
+#   - GENERAL/DATA classifier in node_generate_sql (Step 1)
+#   - _GENERAL_ANSWER_PROMPT — schema-aware direct answers for general questions
+#   - Platform entities loaded from dim_platform star schema table (STAR_SOURCES)
+#   - general_answer route in graph → END (skips DB entirely)
+#   - General answer stream passthrough in engine.py query_stream()
 #
-#   4. run() now accepts thread_id parameter (default "main")
-#      The old code hardcoded CONFIG = {"configurable": {"thread_id": "main"}}
-#      at module level, so every user shared the same LangGraph memory thread.
-#      Conversation history from one user would contaminate the next user's
-#      query. Pass a unique thread_id (e.g. UUID) per user/session from chat.py.
+# FIXED vs LAST version:
+#   - run() restores thread_id parameter (LAST dropped it, re-introduced
+#     module-level CONFIG with hardcoded thread_id="main" — breaks multi-user)
 
+from __future__ import annotations
 
 import os
 import re
@@ -28,24 +35,19 @@ import duckdb
 from typing import TypedDict, Annotated, cast
 import operator
 
-
 from dotenv import load_dotenv
 load_dotenv()
-
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
-
 from nlp.executor import execute
 from nlp.synthesiser import synthesise
 from nlp.prompt_builder import SYSTEM_PROMPT
 
-
 logger = logging.getLogger(__name__)
-
 
 # ──────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -64,12 +66,24 @@ def _get_llm() -> ChatGoogleGenerativeAI:
 
 
 def _get_llm_plain() -> ChatGoogleGenerativeAI:
-    """Plain LLM for short follow-up calls — no tools bound."""
+    """Plain LLM for general answer + empty-result calls — thinking disabled."""
     return ChatGoogleGenerativeAI(
         model=GEMINI_MODEL,
         google_api_key=os.environ.get("GEMINI_API_KEY", ""),
         temperature=0.0,
-        max_output_tokens=1024,  # FIX: was 256, too small for entity listing
+        max_output_tokens=1024,   # FIX: was 256 — too small for entity listing
+        thinking_budget=0,        # disables chain-of-thought — faster responses
+    )
+
+
+def _get_llm_classifier() -> ChatGoogleGenerativeAI:
+    """Micro LLM just for GENERAL/DATA routing — outputs one word only."""
+    return ChatGoogleGenerativeAI(
+        model=GEMINI_MODEL,
+        google_api_key=os.environ.get("GEMINI_API_KEY", ""),
+        temperature=0.0,
+        max_output_tokens=8,
+        thinking_budget=0,
     )
 
 
@@ -78,18 +92,19 @@ def _get_llm_plain() -> ChatGoogleGenerativeAI:
 # ──────────────────────────────────────────────────────────────────────
 
 class AgentState(TypedDict):
-    messages:         Annotated[list[BaseMessage], operator.add]
-    user_question:    str
-    schema:           str
-    retrieved_tables: list[str]
-    generated_sql:    str
-    sql_error:        str | None
-    data:             list[dict]
-    row_count:        int
-    insight:          str | None
-    needs_input:      bool
-    cannot_answer:    bool
-    final_message:    str
+    messages:          Annotated[list[BaseMessage], operator.add]
+    user_question:     str
+    schema:            str
+    retrieved_tables:  list[str]
+    generated_sql:     str
+    sql_error:         str | None
+    data:              list[dict]
+    row_count:         int
+    insight:           str | None
+    needs_input:       bool
+    cannot_answer:     bool
+    final_message:     str
+    is_general_answer: bool   # True when question answered directly without SQL
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -99,6 +114,61 @@ class AgentState(TypedDict):
 CANNOT_ANSWER_RULES = """
 If the question cannot be answered from the available schema, return:
 CANNOT_ANSWER: <one sentence why> | <suggestion 1> | <suggestion 2> | <suggestion 3>
+""".strip()
+
+# ──────────────────────────────────────────────────────────────────────
+# GENERAL QUESTION PROMPTS
+# Split into two calls:
+#   1. _CLASSIFIER_PROMPT   — routes DATA vs GENERAL (no schema, 8 tokens)
+#   2. _GENERAL_ANSWER_PROMPT — answers the general question (schema injected)
+# Kept separate so SYSTEM_PROMPT (SQL instructions) never interferes.
+# ──────────────────────────────────────────────────────────────────────
+
+_CLASSIFIER_PROMPT = """
+You are a router. Classify the user message into exactly one category.
+
+GENERAL — user is asking about the platform, its features, metrics, terminology,
+available data, tables, dimensions, or how something works.
+
+DATA — user wants specific numbers, stats, rankings, trends, or comparisons
+that need to be looked up.
+
+Examples of GENERAL:
+  "what is frammer ai"
+  "give information about frammer"
+  "what is a creation multiplier"
+  "what does publish rate mean"
+  "what tables are available"
+  "what metrics can you calculate"
+  "what is the star schema"
+  "what languages are supported"
+  "what platforms does frammer publish to"
+  "tell me about the data model"
+  "hi"
+  "what can you do"
+
+Examples of DATA:
+  "how many videos were uploaded in february"
+  "which user has the highest publish rate"
+  "show me creation multiplier by channel"
+  "top 5 users by uploads"
+
+Reply with exactly one word: GENERAL or DATA
+""".strip()
+
+_GENERAL_ANSWER_PROMPT = """
+You are a Frammer analytics assistant. Frammer is an AI-powered video content
+production platform that processes uploaded source videos and generates
+multiple output clips, which can then be published to social platforms.
+
+You have access to the following schema and platform knowledge:
+
+{schema}
+
+Answer the user's question directly and helpfully in plain English.
+Use light markdown (bold, bullet lists) where it improves readability.
+Do NOT mention SQL, databases, or that you are any kind of query tool.
+You are simply a Frammer analytics assistant.
 """.strip()
 
 
@@ -114,22 +184,31 @@ def _load_known_entities() -> dict[str, list[str]]:
     if _KNOWN_ENTITIES:
         return _KNOWN_ENTITIES
 
-    # FIX: Guard covers ANY Windows drive letter (C:, D:, E:, ...) not just C:
     _fallback_db = os.path.normpath(
         os.path.join(os.path.dirname(__file__), "..", "..", "frammer_analytics.duckdb")
     )
     raw_path = os.environ.get("FRAMMER_DB_PATH", "").strip()
+
     if not raw_path:
         db_path = _fallback_db
-    elif len(raw_path) >= 2 and raw_path[1] == ":" and raw_path[0].isalpha():
+    elif (
+        len(raw_path) >= 2
+        and raw_path[1] == ":"
+        and raw_path[0].isalpha()
+        and os.name != "nt"          # only block Windows paths when running on Linux/Mac
+    ):
+        # Windows absolute path detected on a non-Windows server — use relative fallback
+        # so a dev's local .env doesn't break the production server.
+        # On Windows itself (os.name == "nt") the path is used as-is.
         logger.warning(
-            f"[agent] FRAMMER_DB_PATH looks like a Windows path ({raw_path!r}). "
-            f"Using fallback: {_fallback_db}"
+            f"[agent] FRAMMER_DB_PATH is a Windows path ({raw_path!r}) but "
+            f"server is not Windows. Using fallback: {_fallback_db}"
         )
         db_path = _fallback_db
     else:
         db_path = os.path.normpath(raw_path)
 
+    # Flat summary tables
     SOURCES = {
         "User":        ("combined_data2025_3_1_2026_2_28_by_user",       "User"),
         "Channel":     ("client_1_combined_data2025_3_1_2026_2_28",       "Channel"),
@@ -139,14 +218,28 @@ def _load_known_entities() -> dict[str, list[str]]:
         "Month":       ("monthly_chart",                                   "Month"),
     }
 
+    # Star schema dimension tables (LAST version addition)
+    STAR_SOURCES = {
+        "Platform": ("dim_platform", "platform_name"),
+    }
+
     try:
         conn = duckdb.connect(db_path, read_only=True)
+
         for label, (table, col) in SOURCES.items():
             rows = conn.execute(
                 f'SELECT DISTINCT "{col}" FROM "{table}" '
                 f'WHERE "{col}" IS NOT NULL ORDER BY "{col}"'
             ).fetchall()
             _KNOWN_ENTITIES[label] = [r[0] for r in rows]
+
+        for label, (table, col) in STAR_SOURCES.items():
+            rows = conn.execute(
+                f'SELECT DISTINCT "{col}" FROM "{table}" '
+                f'WHERE "{col}" IS NOT NULL ORDER BY "{col}"'
+            ).fetchall()
+            _KNOWN_ENTITIES[label] = [r[0] for r in rows]
+
         conn.close()
         logger.info(
             f"[agent] Known entities loaded: "
@@ -168,89 +261,53 @@ def _format_entities() -> str:
 
 # ──────────────────────────────────────────────────────────────────────
 # TOKEN NORMALIZERS
-# These run BEFORE fuzzy matching so that natural language phrases like
-# "February 2026" or "Hindi" are converted to their DB representations
-# ("Feb, 2026", "hi") and picked up by the high-confidence pass.
+# Run BEFORE fuzzy matching so natural phrases like "February 2026" or
+# "Hindi" are converted to DB representations ("Feb, 2026", "hi") and
+# picked up by the high-confidence pass.
 # ──────────────────────────────────────────────────────────────────────
 
-# Maps lowercase full/common month spellings → DB abbreviation
 _MONTH_ALIASES: dict[str, str] = {
-    "january":   "Jan",
-    "february":  "Feb",
-    "march":     "Mar",
-    "april":     "Apr",
-    "may":       "May",
-    "june":      "Jun",
-    "july":      "Jul",
-    "august":    "Aug",
-    "september": "Sep",
-    "october":   "Oct",
-    "november":  "Nov",
-    "december":  "Dec",
+    "january":   "Jan", "february":  "Feb", "march":     "Mar",
+    "april":     "Apr", "may":       "May", "june":      "Jun",
+    "july":      "Jul", "august":    "Aug", "september": "Sep",
+    "october":   "Oct", "november":  "Nov", "december":  "Dec",
 }
 
-# Maps lowercase full language names → DB language code
 _LANGUAGE_ALIASES: dict[str, str] = {
-    "english": "en",
-    "hindi":   "hi",
-    "spanish": "es",
-    "arabic":  "ar",
-    "marathi": "mr",
-    "mixed":   "mix",
+    "english": "en", "hindi": "hi", "spanish": "es",
+    "arabic":  "ar", "marathi": "mr", "mixed": "mix",
 }
 
 
 def _normalize_month_tokens(tokens: list[str]) -> list[str]:
     """
-    Synthesises "Mon, YYYY" tokens from natural month mentions — with typo tolerance.
-
-    Strategy:
-      1. Exact lookup in _MONTH_ALIASES (e.g. "december" → "Dec")
-      2. Fuzzy match against alias keys at cutoff=0.75 for typos
-
-      If YEAR is present in query:
-        → Build "Mon, YYYY" tokens via cross-product (existing behaviour)
-           e.g. "february 2026" → "Feb, 2026"
-
-      If NO YEAR in query:                           ← THIS IS THE FIX
-        → Look up known Month entities from DB and
-          find all entries whose prefix matches the resolved abbreviation.
-          e.g. "december" → scans known Months → finds "Dec, 2025" → adds it.
-          This fires SILENT CORRECT without asking the user for a year.
+    "february" → "Feb, 2026" (with year) or resolves against known DB months
+    (without year) so it hits the high-confidence pass silently.
     """
     extra: list[str] = []
     years = [t for t in tokens if re.fullmatch(r"20\d{2}", t)]
-
     resolved_abbrevs: list[str] = []
+
     for token in tokens:
         if token in _MONTH_ALIASES:
             resolved_abbrevs.append(_MONTH_ALIASES[token])
         else:
             matches = difflib.get_close_matches(
-                token,
-                list(_MONTH_ALIASES.keys()),
-                n=1,
-                cutoff=0.75,
+                token, list(_MONTH_ALIASES.keys()), n=1, cutoff=0.75,
             )
             if matches:
                 resolved_abbrevs.append(_MONTH_ALIASES[matches[0]])
 
     if years:
-        # Original behaviour — explicit year present in query
         for abbrev in resolved_abbrevs:
             for year in years:
                 db_token = f"{abbrev}, {year}"
                 if db_token not in extra:
                     extra.append(db_token)
     else:
-        # No year — resolve against known DB month values directly.
-        # e.g. "december" → abbrev "Dec" → scans ["Mar, 2025", ..., "Dec, 2025", ...]
-        #      → finds "Dec, 2025" → appends it as a high-confidence token.
-        # If a month appears in two years (e.g. "Jan" could be "Jan, 2026" only),
-        # all matches are added — Gemini picks the right one from context.
         known_months = _load_known_entities().get("Month", [])
         for abbrev in resolved_abbrevs:
-            prefix = f"{abbrev},"          # e.g. "Dec,"
+            prefix = f"{abbrev},"
             for known in known_months:
                 if known.startswith(prefix) and known not in extra:
                     extra.append(known)
@@ -258,22 +315,8 @@ def _normalize_month_tokens(tokens: list[str]) -> list[str]:
     return tokens + extra
 
 
-
 def _normalize_language_tokens(tokens: list[str]) -> list[str]:
-    """
-    Converts full language names → DB language codes — with typo tolerance.
-
-    Strategy:
-      1. Exact lookup in _LANGUAGE_ALIASES (e.g. "hindi" → "hi")
-      2. Fuzzy match against alias keys at cutoff=0.80 for typos
-         (e.g. "hindii", "hendi" → "hi")
-         Higher cutoff than months because language codes are very short
-         and false positives are more damaging (e.g. "mix" vs "hi").
-
-    The DB code itself ("hi", "en") is appended as a new token so it
-    hits the high-confidence pass in _format_entities_for_clarification
-    and resolves silently without asking the user for confirmation.
-    """
+    """"hindi" → "hi", "english" → "en" — with typo tolerance (cutoff 0.80)."""
     extra: list[str] = []
     for token in tokens:
         if token in _LANGUAGE_ALIASES:
@@ -282,10 +325,7 @@ def _normalize_language_tokens(tokens: list[str]) -> list[str]:
                 extra.append(code)
         else:
             matches = difflib.get_close_matches(
-                token,
-                list(_LANGUAGE_ALIASES.keys()),
-                n=1,
-                cutoff=0.80,
+                token, list(_LANGUAGE_ALIASES.keys()), n=1, cutoff=0.80,
             )
             if matches:
                 code = _LANGUAGE_ALIASES[matches[0]]
@@ -315,22 +355,17 @@ def _format_entities_for_clarification(user_question: str) -> str:
         if len(t) >= 1 and t.lower() not in _STOPWORDS
     ]
 
-     # ── CHANNEL LETTER RESCUE ─────────────────────────────────────────
+    # ── CHANNEL LETTER RESCUE ─────────────────────────────────────────
     # Single letters like "a", "d" are valid channel names but get wiped
-    # by stopwords ("a") or are too short to be meaningful alone.
-    # If the user wrote "channel X" explicitly, always preserve X.
-
+    # by stopwords. "channel X" → preserve X explicitly.
     channel_refs = re.findall(r'\bchannel\s+([a-zA-Z])\b', user_question, re.IGNORECASE)
     for ref in channel_refs:
         t = ref.lower()
         if t not in tokens:
             tokens.append(t)
-            
-    # Also catch "metrics for X", "info about X", "stats for X" when X is a single letter
+
     entity_refs = re.findall(
-        r'\b(?:channel|for|about|of)\s+([a-zA-Z])\b',
-        user_question,
-        re.IGNORECASE
+        r'\b(?:channel|for|about|of)\s+([a-zA-Z])\b', user_question, re.IGNORECASE
     )
     for ref in entity_refs:
         t = ref.lower()
@@ -341,30 +376,25 @@ def _format_entities_for_clarification(user_question: str) -> str:
     if concat and concat not in tokens:
         tokens.append(concat)
 
-    # ── Normalize months and languages BEFORE fuzzy matching ──────────
-    # This converts "february" → "Feb, 2026" and "hindi" → "hi" so they
-    # hit the high-confidence (≥0.80) pass and resolve silently.
+    # Normalize months and languages BEFORE fuzzy matching
     tokens = _normalize_month_tokens(tokens)
     tokens = _normalize_language_tokens(tokens)
 
     lines: list[str] = []
     for label, values in entities.items():
-        values_lower: dict[str, str] = {
-            str(v).lower(): str(v) for v in values
-        }
+        values_lower: dict[str, str] = {str(v).lower(): str(v) for v in values}
 
-        high_conf: list[str] = []   # similarity >= 0.80 — safe to correct silently
-        low_conf:  list[str] = []   # similarity 0.35–0.79 — ask for confirmation
+        high_conf: list[str] = []
+        low_conf:  list[str] = []
 
         for token in tokens:
-            # High confidence pass
             for m in difflib.get_close_matches(token, list(values_lower.keys()), n=3, cutoff=0.80):
                 v = values_lower.get(m, m)
                 if v not in high_conf:
                     high_conf.append(v)
 
-            # Low confidence pass
-            for m in difflib.get_close_matches(token, list(values_lower.keys()), n=3, cutoff=0.35):  # FIX: was 0.2 (too aggressive)
+            # YOUR FIX: cutoff 0.35 (was 0.2 — too aggressive, caused false prompts)
+            for m in difflib.get_close_matches(token, list(values_lower.keys()), n=3, cutoff=0.35):
                 v = values_lower.get(m, m)
                 if v not in high_conf and v not in low_conf:
                     low_conf.append(v)
@@ -406,22 +436,24 @@ def _clean_sql(raw: str) -> str:
 def _parse_cannot_answer(text: str) -> dict:
     parts = text.split("CANNOT_ANSWER:", 1)[-1].strip()
     return {
-        "cannot_answer": True,
-        "needs_input":   False,
-        "generated_sql": "",
-        "sql_error":     None,
-        "final_message": parts,
+        "cannot_answer":     True,
+        "needs_input":       False,
+        "generated_sql":     "",
+        "sql_error":         None,
+        "final_message":     parts,
+        "is_general_answer": False,
     }
 
 
 def _parse_clarify(text: str) -> dict:
     question = text.split("CLARIFY:", 1)[-1].strip()
     return {
-        "needs_input":   True,
-        "cannot_answer": False,
-        "generated_sql": "",
-        "sql_error":     None,
-        "final_message": question,
+        "needs_input":       True,
+        "cannot_answer":     False,
+        "generated_sql":     "",
+        "sql_error":         None,
+        "final_message":     question,
+        "is_general_answer": False,
     }
 
 
@@ -430,6 +462,48 @@ def _parse_clarify(text: str) -> dict:
 # ──────────────────────────────────────────────────────────────────────
 
 def node_generate_sql(state: AgentState) -> dict:
+
+    # ── STEP 1: Route — GENERAL question or DATA query? ───────────────
+    # Tiny call: no schema, thinking disabled, max 8 output tokens.
+    # Outputs exactly one word: GENERAL or DATA.
+    try:
+        route_raw = str(
+            _get_llm_classifier().invoke([
+                SystemMessage(content=_CLASSIFIER_PROMPT),
+                HumanMessage(content=state["user_question"]),
+            ]).content
+        ).strip().upper()
+        logger.info(f"[agent] Classifier route: {route_raw!r}")
+    except Exception as e:
+        logger.warning(f"[agent] Classifier failed ({e}) — defaulting to DATA.")
+        route_raw = "DATA"
+
+    # ── STEP 2: GENERAL → answer directly, skip SQL entirely ──────────
+    if "GENERAL" in route_raw:
+        try:
+            answer_prompt = _GENERAL_ANSWER_PROMPT.format(schema=state["schema"])
+            answer_raw = str(
+                _get_llm_plain().invoke([
+                    SystemMessage(content=answer_prompt),
+                    HumanMessage(content=state["user_question"]),
+                ]).content
+            ).strip()
+            logger.info("[agent] General question — answered directly, skipping SQL.")
+        except Exception as e:
+            logger.error(f"[agent] General answer call failed ({e}).")
+            answer_raw = "I'm sorry, I wasn't able to generate a response. Please try again."
+
+        return {
+            "generated_sql":     "",
+            "sql_error":         None,
+            "needs_input":       False,
+            "cannot_answer":     False,
+            "is_general_answer": True,
+            "final_message":     answer_raw,
+            "messages":          [AIMessage(content=answer_raw)],
+        }
+
+    # ── STEP 3: DATA → full SQL generation ────────────────────────────
     llm = _get_llm()
 
     system_text = (
@@ -468,8 +542,6 @@ RULES — follow strictly in order:
    → Do NOT write SQL yet.
    → Return: CLARIFY: I found a possible match for "<typed_value>": "<matched_value>".
      Did you mean "<matched_value>", or did you mean someone else?
-   Example: "harry" → ask before assuming "Harish"
-            "alice" → ask before assuming any similar name
 
 3. No match found:
    → Do NOT write SQL.
@@ -480,13 +552,11 @@ RULES — follow strictly in order:
    → Return: CANNOT_ANSWER: <reason> | <suggestion 1> | <suggestion 2> | <suggestion 3>
 
 Never use a raw user-typed string in a WHERE clause.
-Never assume a name substitution without confirmation from the user."""
+Never assume a name substitution without confirmation from the user.
 
-    messages.append(
-        HumanMessage(
-            content=f"{entity_reminder}\n\nUser question: {state['user_question']}"
-        )
-    )
+User question: {state['user_question']}"""
+
+    messages.append(HumanMessage(content=entity_reminder))
 
     try:
         response = llm.invoke(messages)
@@ -495,10 +565,11 @@ Never assume a name substitution without confirmation from the user."""
     except Exception as e:
         logger.error(f"[agent] Gemini API call failed: {e}")
         return {
-            "sql_error":     f"Gemini API error: {e}",
-            "generated_sql": "",
-            "final_message": f"SQL generation failed: {e}",
-            "messages":      [AIMessage(content=f"Error: {e}")],
+            "sql_error":         f"Gemini API error: {e}",
+            "generated_sql":     "",
+            "final_message":     f"SQL generation failed: {e}",
+            "is_general_answer": False,
+            "messages":          [AIMessage(content=f"Error: {e}")],
         }
 
     if raw.startswith("CLARIFY:"):
@@ -513,9 +584,10 @@ Never assume a name substitution without confirmation from the user."""
 
     sql = _clean_sql(raw)
     return {
-        "generated_sql": sql,
-        "sql_error":     None,
-        "messages":      [AIMessage(content=sql)],
+        "generated_sql":     sql,
+        "sql_error":         None,
+        "is_general_answer": False,
+        "messages":          [AIMessage(content=sql)],
     }
 
 
@@ -540,9 +612,8 @@ def node_execute_sql(state: AgentState) -> dict:
 
 def node_handle_empty_results(state: AgentState) -> dict:
     """
-    Uses the FULL entity list (_format_entities) here intentionally —
-    this node is diagnosing a WHERE clause mismatch and needs to
-    compare exhaustively, not just against fuzzy token matches.
+    Uses the FULL entity list (_format_entities) — diagnosing a WHERE
+    clause mismatch requires exhaustive comparison, not fuzzy tokens.
     """
     llm = _get_llm_plain()
 
@@ -556,15 +627,15 @@ User question: "{state["user_question"]}"
 KNOWN VALUES IN THE DATABASE:
 {_format_entities()}
 
-Compare every value in the WHERE clause of the SQL above against the
-KNOWN VALUES. Identify which value is likely causing zero results.
+Compare every value in the WHERE clause against the KNOWN VALUES.
+Identify which value is likely causing zero results.
 
 Respond with EXACTLY one of these two formats — nothing else:
 
 If an entity mismatch is likely:
 CLARIFY: I couldn't find "<where_value>" in the dataset. The available <label> values are: <list ALL values for that label from KNOWN VALUES>
 
-If the data genuinely does not exist in the dataset:
+If the data genuinely does not exist:
 CANNOT_ANSWER: <reason> | <suggestion 1> | <suggestion 2> | <suggestion 3>"""
 
     try:
@@ -587,7 +658,7 @@ CANNOT_ANSWER: <reason> | <suggestion 1> | <suggestion 2> | <suggestion 3>"""
         }
 
     if raw.startswith("CANNOT_ANSWER:"):
-        parts = raw[len("CANNOT_ANSWER:"):].strip().split("|")
+        parts       = raw[len("CANNOT_ANSWER:"):].strip().split("|")
         reason      = parts[0].strip()
         suggestions = [p.strip() for p in parts[1:]]
         msg = reason
@@ -595,17 +666,9 @@ CANNOT_ANSWER: <reason> | <suggestion 1> | <suggestion 2> | <suggestion 3>"""
             msg += "\n\nYou could try:\n" + "\n".join(
                 f"  {i+1}) {s}" for i, s in enumerate(suggestions)
             )
-        return {
-            "needs_input":   False,
-            "cannot_answer": True,
-            "final_message": msg,
-        }
+        return {"needs_input": False, "cannot_answer": True, "final_message": msg}
 
-    return {
-        "needs_input":   True,
-        "cannot_answer": False,
-        "final_message": raw,
-    }
+    return {"needs_input": True, "cannot_answer": False, "final_message": raw}
 
 
 def node_synthesise(state: AgentState) -> dict:
@@ -615,7 +678,6 @@ def node_synthesise(state: AgentState) -> dict:
         tables=state["retrieved_tables"],
         data=state["data"],
     )
-
     insight   = result.insight if result.success else None
     final_msg = insight or "Results retrieved successfully."
     return {
@@ -652,6 +714,8 @@ def route_after_generation(state: AgentState) -> str:
         return "needs_input"
     if state.get("cannot_answer"):
         return "cannot_answer"
+    if state.get("is_general_answer"):
+        return "general_answer"
     return "execute"
 
 
@@ -685,9 +749,10 @@ def _build_graph() -> StateGraph:
     graph.set_entry_point("generate_sql")
 
     graph.add_conditional_edges("generate_sql", route_after_generation, {
-        "execute":       "execute_sql",
-        "needs_input":   END,
-        "cannot_answer": "format_cannot_answer",
+        "execute":        "execute_sql",
+        "needs_input":    END,
+        "cannot_answer":  "format_cannot_answer",
+        "general_answer": END,   # answered directly — skip DB entirely
     })
 
     graph.add_conditional_edges("execute_sql", route_after_execution, {
@@ -715,12 +780,6 @@ memory   = MemorySaver()
 _graph   = _build_graph()
 compiled = _graph.compile(checkpointer=memory)
 
-# FIX (MAJOR): Removed module-level CONFIG with hardcoded thread_id="main".
-# All users sharing a single thread_id means conversation history from User A
-# pollutes User B's next query. run() now accepts an optional thread_id so
-# each HTTP request / user session gets its own isolated memory thread.
-# Default is "main" for backward-compat with main.py interactive harness.
-
 
 # ──────────────────────────────────────────────────────────────────────
 # PUBLIC API
@@ -739,26 +798,27 @@ def run(
         user_question:    Raw user input string.
         schema:           Assembled prompt text from build_prompt().
         retrieved_tables: Table names retrieved from ChromaDB.
-        thread_id:        LangGraph memory thread ID. Use a unique value
-                          per user/session (e.g. a UUID) to prevent
-                          conversation history leaking between users.
-                          Defaults to "main" for the interactive CLI.
+        thread_id:        LangGraph memory thread ID. Use a unique UUID
+                          per user/session to prevent conversation history
+                          leaking between users. Defaults to "main" for
+                          the interactive CLI (main.py).
     """
     config = {"configurable": {"thread_id": thread_id}}
     result = compiled.invoke(
         {
-            "messages":         [HumanMessage(content=user_question)],
-            "user_question":    user_question,
-            "schema":           schema,
-            "retrieved_tables": retrieved_tables,
-            "generated_sql":    "",
-            "sql_error":        None,
-            "data":             [],
-            "row_count":        0,
-            "insight":          None,
-            "needs_input":      False,
-            "cannot_answer":    False,
-            "final_message":    "",
+            "messages":          [HumanMessage(content=user_question)],
+            "user_question":     user_question,
+            "schema":            schema,
+            "retrieved_tables":  retrieved_tables,
+            "generated_sql":     "",
+            "sql_error":         None,
+            "data":              [],
+            "row_count":         0,
+            "insight":           None,
+            "needs_input":       False,
+            "cannot_answer":     False,
+            "final_message":     "",
+            "is_general_answer": False,
         },
         config=config,
     )

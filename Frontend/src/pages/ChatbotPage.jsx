@@ -14,6 +14,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { motion, AnimatePresence } from "framer-motion";
+import ReactMarkdown from "react-markdown";
 import {
   Send, Loader2, Bot, User, AlertTriangle, XCircle,
   ChevronDown, ChevronUp, Database, Sparkles, Copy,
@@ -287,7 +288,9 @@ function AIBubble({ data }) {
               <HelpCircle className="h-3.5 w-3.5 text-amber-400" />
               <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400">Clarification needed</span>
             </div>
-            <p className="text-sm text-amber-200/80 leading-relaxed">{data.message}</p>
+            <div className="prose prose-sm prose-invert max-w-none prose-p:text-amber-200/80 prose-p:leading-relaxed prose-p:my-0 prose-strong:text-amber-200">
+              <ReactMarkdown>{data.message}</ReactMarkdown>
+            </div>
           </div>
         )}
 
@@ -313,7 +316,17 @@ function AIBubble({ data }) {
                   <Lightbulb className="h-3.5 w-3.5 text-indigo-400" />
                   <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">Insight</span>
                 </div>
-                <p className="text-sm leading-relaxed text-foreground/90">{data.insight}</p>
+                <div className="prose prose-sm prose-invert max-w-none
+                  prose-p:text-foreground/90 prose-p:leading-relaxed prose-p:my-1.5
+                  prose-strong:text-foreground prose-strong:font-semibold
+                  prose-ul:my-1.5 prose-ul:pl-4 prose-li:my-0.5 prose-li:text-foreground/85
+                  prose-ol:my-1.5 prose-ol:pl-4
+                  prose-headings:text-foreground prose-headings:font-semibold
+                  prose-h3:text-sm prose-h3:mt-3 prose-h3:mb-1
+                  prose-code:text-indigo-300 prose-code:bg-muted/40 prose-code:px-1 prose-code:rounded prose-code:text-xs
+                  prose-blockquote:border-indigo-500/40 prose-blockquote:text-muted-foreground">
+                  <ReactMarkdown>{data.insight}</ReactMarkdown>
+                </div>
               </div>
             )}
 
@@ -428,7 +441,9 @@ function CannotAnswerBody({ message }) {
   const suggestions = parts.slice(1);
   return (
     <div className="space-y-3">
-      <p className="text-sm text-muted-foreground leading-relaxed">{reason}</p>
+      <div className="prose prose-sm prose-invert max-w-none prose-p:text-muted-foreground prose-p:leading-relaxed prose-p:my-0 prose-strong:text-foreground">
+        <ReactMarkdown>{reason}</ReactMarkdown>
+      </div>
       {suggestions.length > 0 && (
         <div>
           <p className="text-[11px] text-muted-foreground/50 mb-1.5">You could try:</p>

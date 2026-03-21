@@ -1,58 +1,49 @@
 # nlp/synthesiser.py
 #
-# Step 2 of the NLP pipeline.
-# Takes the raw DuckDB result + SQL + original question
-# and produces a natural language insight with explainability.
+# MERGED — uses FRIEND's improvements over YOUR version:
 #
-# Uses the same google.genai client pattern as sql_generator.py.
+# FRIEND's improvements kept:
+#   - _MAX_ROWS_IN_PROMPT: 100 → 200 (richer context for synthesis)
+#   - thinking_budget=0 in GENERATION_CONFIG (disables Gemini internal
+#     chain-of-thought — reduces latency, no quality loss for synthesis)
 #
-# Streaming:
-#   synthesise()        — original blocking call, returns SynthesisResult.
-#                         Used internally by the LangGraph agent node.
-#   synthesise_stream() — generator that yields text chunks as they arrive.
-#                         Used by engine.query_stream() for low-latency output.
-
+# YOUR version was otherwise identical — all other logic preserved.
 
 import os
 import logging
 from dataclasses import dataclass
 from dotenv import load_dotenv
 
-
 load_dotenv()
-
 
 from google import genai
 from google.genai import types
 
-
 logger = logging.getLogger(__name__)
-
 
 # ──────────────────────────────────────────────────────────────────────
 # CONFIG
 # ──────────────────────────────────────────────────────────────────────
 
-
 # Controls how many rows are sent to Gemini for synthesis.
-# Lower = fewer tokens consumed = more room for the insight response.
-_MAX_ROWS_IN_PROMPT = 100
-
+# Higher = richer context, more tokens consumed.
+_MAX_ROWS_IN_PROMPT = 200   # FRIEND: raised from 100 → 200
 
 GEMINI_MODEL = "gemini-2.5-flash"
 
-
 GENERATION_CONFIG = types.GenerateContentConfig(
-    temperature=0.6,       # slightly higher than before (was 0.4) — more expressive prose
+    temperature=0.6,
     max_output_tokens=8192,
     candidate_count=1,
+    thinking_config=types.ThinkingConfig(
+        thinking_budget=0,   # FRIEND: disables internal chain-of-thought — faster responses
+    ),
 )
 
 
 # ──────────────────────────────────────────────────────────────────────
-# CLIENT — same pattern as sql_generator.py
+# CLIENT
 # ──────────────────────────────────────────────────────────────────────
-
 
 def _get_client() -> genai.Client:
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -67,7 +58,6 @@ def _get_client() -> genai.Client:
 # ──────────────────────────────────────────────────────────────────────
 # PROMPT TEMPLATE
 # ──────────────────────────────────────────────────────────────────────
-
 
 SYNTHESIS_PROMPT = """
 You are a senior data analyst for Frammer, a video content production platform.
@@ -137,7 +127,6 @@ RULES:
 # RETURN TYPE
 # ──────────────────────────────────────────────────────────────────────
 
-
 @dataclass
 class SynthesisResult:
     success:      bool
@@ -149,7 +138,6 @@ class SynthesisResult:
 # ──────────────────────────────────────────────────────────────────────
 # INTERNAL HELPERS
 # ──────────────────────────────────────────────────────────────────────
-
 
 def _extract_filters(sql: str) -> str:
     """
@@ -165,7 +153,6 @@ def _extract_filters(sql: str) -> str:
         )):
             filters.append(stripped)
 
-    # ORDER BY — first occurrence only
     order_line = next(
         (l.strip() for l in sql.split("\n")
          if l.strip().upper().startswith("ORDER BY")), None
@@ -173,7 +160,6 @@ def _extract_filters(sql: str) -> str:
     if order_line:
         filters.append(order_line)
 
-    # LIMIT — first occurrence only
     limit_line = next(
         (l.strip() for l in sql.split("\n")
          if l.strip().upper().startswith("LIMIT")), None
@@ -225,9 +211,8 @@ def _build_prompt(
 
 
 # ──────────────────────────────────────────────────────────────────────
-# PUBLIC: SYNTHESISE
+# PUBLIC: SYNTHESISE (blocking)
 # ──────────────────────────────────────────────────────────────────────
-
 
 def synthesise(
     question: str,
@@ -270,7 +255,6 @@ def synthesise(
         )
         raw = response.text.strip()
 
-        # ── Guard: warn if response was cut mid-generation ────────────
         candidate = response.candidates[0] if response.candidates else None
         if candidate:
             finish_reason = str(candidate.finish_reason)
@@ -313,7 +297,6 @@ def synthesise(
 # PUBLIC: SYNTHESISE_STREAM
 # ──────────────────────────────────────────────────────────────────────
 
-
 def synthesise_stream(
     question: str,
     sql: str,
@@ -325,14 +308,12 @@ def synthesise_stream(
 
     Yields text chunks (str) as they arrive from the Gemini API, so the
     caller can print or forward them immediately without waiting for the
-    full response.  The complete accumulated text is yielded as the very
-    last item wrapped in a SynthesisResult — this lets engine.py capture
-    the final insight string for NLPResult without a second API call.
+    full response. The complete accumulated text is yielded as the very
+    last item wrapped in a SynthesisResult.
 
     Yield protocol:
         str             — incremental text chunk (print these immediately)
         SynthesisResult — final item; always the last thing yielded.
-                          Signals end-of-stream and carries the complete insight.
 
     Caller pattern:
         for chunk in synthesise_stream(...):
@@ -340,14 +321,7 @@ def synthesise_stream(
                 print(chunk, end="", flush=True)
             else:
                 result = chunk   # SynthesisResult
-
-    Args:
-        question: Original user question.
-        sql:      SQL that was executed.
-        tables:   List of table names referenced.
-        data:     Raw query results as list of row dicts.
     """
-    # ── Fast-path: no data — yield the static message immediately ────
     if not data:
         static = (
             "The query returned no results. "
@@ -369,11 +343,10 @@ def synthesise_stream(
             contents=prompt,
             config=GENERATION_CONFIG,
         ):
-            # chunk.text can be None on the final usage-only chunk
             text = chunk.text or ""
             if text:
                 accumulated.append(text)
-                yield text  # ← caller prints this immediately
+                yield text
 
     except Exception as e:
         logger.error(f"[synthesiser] Streaming Gemini API call failed: {e}")
@@ -402,7 +375,6 @@ def synthesise_stream(
 
     logger.debug(f"[synthesiser] Streamed insight ({len(full_text)} chars)")
 
-    # Final sentinel — carries the complete insight for NLPResult
     yield SynthesisResult(
         success=True,
         insight=full_text,
