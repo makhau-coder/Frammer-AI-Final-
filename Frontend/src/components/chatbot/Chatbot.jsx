@@ -28,17 +28,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { BASE_URL }   from '@/lib/api';
 import ReactMarkdown  from 'react-markdown';
 
-// ─── Lazy-load Plotly ─────────────────────────────────────────────────────────
-let PlotlyComponent = null;
-async function loadPlotly() {
-  if (PlotlyComponent) return PlotlyComponent;
-  try {
-    const P = await import('react-plotly.js');
-    PlotlyComponent = P.default;
-    return PlotlyComponent;
-  } catch { return null; }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // PAGE CONTEXT MAP  — keys match App.jsx routes EXACTLY
 // ─────────────────────────────────────────────────────────────────────────────
@@ -168,35 +157,21 @@ function DataTable({ rows }) {
   );
 }
 
-function PlotlyChart({ chartJson, chartType, sizeMode }) {
-  const [Plot, setPlot]   = useState(null);
-  const [error, setError] = useState(false);
-  useEffect(() => {
-    loadPlotly().then(p => { if (p) setPlot(() => p); else setError(true); });
-  }, []);
-  if (error) {
-    return (
-      <div className="mr-auto max-w-[90%] rounded-lg border border-border bg-secondary/50 px-3 py-2 text-xs text-muted-foreground">
-        <BarChart2 className="inline h-3 w-3 mr-1" />
-        Chart ready — run <code className="font-mono">npm install react-plotly.js plotly.js-dist-min</code>.
-      </div>
-    );
-  }
-  if (!Plot || !chartJson) return null;
-  const w = sizeMode === 'full' ? 700 : sizeMode === 'half' ? 500 : 320;
-  const layout = {
-    ...chartJson.layout,
-    paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
-    font: { color: '#e0e0e0', size: 10 },
-    margin: { l: 45, r: 15, t: 30, b: 45 },
-    height: 240, width: w, showlegend: true, autosize: false,
-  };
+function ChartImage({ chartUrl, chartType }) {
+  if (!chartUrl) return null;
+  const API = (BASE_URL || 'http://localhost:8000');
   return (
-    <div className="mr-auto overflow-hidden rounded-lg border border-border bg-secondary/50">
+    <div className="mr-auto overflow-hidden rounded-lg border border-border bg-secondary/50 max-w-[90%]">
       <div className="px-3 pt-2 text-[10px] text-muted-foreground capitalize flex items-center gap-1">
-        <BarChart2 className="h-3 w-3" />{chartType} chart
+        <BarChart2 className="h-3 w-3" />{chartType || 'chart'}
       </div>
-      <Plot data={chartJson.data} layout={layout} config={{ displayModeBar: false, responsive: false }} />
+      <img
+        src={`${API}${chartUrl}`}
+        alt={chartType || 'chart'}
+        className="w-full object-contain rounded-b-lg"
+        style={{ maxHeight: 260 }}
+        onError={e => { e.currentTarget.closest('.rounded-lg').style.display = 'none'; }}
+      />
     </div>
   );
 }
@@ -296,7 +271,8 @@ export function Chatbot() {
 
     const currentCtx      = getCtx(pathname);
     const questionWithCtx = `[Page context: ${currentCtx.hint}]\n\nUser question: ${rawQuestion}`;
-    const url = `${BASE_URL}/api/chat/stream?question=${encodeURIComponent(questionWithCtx)}`;
+    const sessionId = `ss-${Date.now()}`;
+    const url = `${BASE_URL}/api/chat/stream?question=${encodeURIComponent(questionWithCtx)}&session_id=${sessionId}`;
     const es  = new EventSource(url);
     esRef.current = es;
 
@@ -313,7 +289,7 @@ export function Chatbot() {
     es.addEventListener('sql_ready',     e => { removeThinking(); const { sql } = JSON.parse(e.data); addBotPart(botMsgId, { type: 'sql', content: sql }); });
     es.addEventListener('data_ready',    e => { removeThinking(); const { rows, row_count } = JSON.parse(e.data); addBotPart(botMsgId, { type: 'table', rows, row_count }); });
     es.addEventListener('insight_ready', e => { removeThinking(); const { insight } = JSON.parse(e.data); addBotPart(botMsgId, { type: 'insight', content: insight }); });
-    es.addEventListener('chart_ready',   e => { removeThinking(); const { chart_json, chart_type } = JSON.parse(e.data); addBotPart(botMsgId, { type: 'chart', chartJson: chart_json, chartType: chart_type }); });
+    es.addEventListener('chart_ready',   e => { removeThinking(); const { chart_url, chart_type } = JSON.parse(e.data); addBotPart(botMsgId, { type: 'chart', chartUrl: chart_url, chartType: chart_type }); });
     es.addEventListener('error',         e => { removeThinking(); const data = JSON.parse(e.data || '{}'); addBotPart(botMsgId, { type: 'error', content: data.message || 'Something went wrong.' }); });
     es.addEventListener('done', () => { es.close(); setStreaming(false); inputRef.current?.focus(); });
     es.onerror = () => { removeThinking(); addBotPart(botMsgId, { type: 'error', content: 'Connection lost. Please try again.' }); es.close(); setStreaming(false); };
@@ -454,7 +430,7 @@ export function Chatbot() {
                   case 'sql':      return <div key={i} className={maxW}><SqlDisclosure sql={part.content} /></div>;
                   case 'table':    return <div key={i} className={maxW}><DataTable rows={part.rows} /></div>;
                   case 'insight':  return <div key={i} className={maxW}><InsightBubble insight={part.content} /></div>;
-                  case 'chart':    return <div key={i} className={maxW}><PlotlyChart chartJson={part.chartJson} chartType={part.chartType} sizeMode={sizeMode} /></div>;
+                  case 'chart':    return <div key={i} className={maxW}><ChartImage chartUrl={part.chartUrl} chartType={part.chartType} /></div>;
                   case 'error':    return <div key={i} className={maxW}><ErrorBubble message={part.content} /></div>;
                   default:         return null;
                 }

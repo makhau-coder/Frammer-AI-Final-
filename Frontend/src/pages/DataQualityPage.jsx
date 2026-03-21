@@ -19,7 +19,8 @@ import {
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
-const API = "http://localhost:8000";
+import { BASE_URL } from "@/lib/api";
+const API = BASE_URL || "http://localhost:8000";
 const TT = { contentStyle: { background: "#1a1b1e", border: "1px solid #333", borderRadius: 8, fontSize: 11, color: "#e0e0e0" } };
 const AX = { tick: { fontSize: 10, fill: "#888" }, axisLine: false, tickLine: false };
 

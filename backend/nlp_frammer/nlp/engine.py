@@ -17,6 +17,7 @@
 
 import logging
 import os
+from typing import Optional
 import sys
 from dataclasses import dataclass, field
 
@@ -46,19 +47,43 @@ class NLPResult:
     cannot_answer:    bool         # True if question is out of scope
     needs_input:      bool         # True if agent is asking the user a question
     message:          str          # Final user-facing message from the agent
-    error:            str | None   # Error message if success=False
+    error:            Optional[str]   # Error message if success=False
 
     # ── Synthesiser / general answer output ──────────────────────────
-    insight:          str | None   # Natural language answer (synthesis or general)
+    insight:          Optional[str]   # Natural language answer (synthesis or general)
                                    # None if synthesis failed or not applicable
 
     # ── Chart output ──────────────────────────────────────────────────
-    chart_path:       str | None   # Absolute path to saved PNG
-    chart_type:       str | None   # e.g. "line", "bar", "heatmap", "dual_axis"
+    chart_path:       Optional[str]   # Absolute path to saved PNG
+    chart_type:       Optional[str]   # e.g. "line", "bar", "heatmap", "dual_axis"
 
     # ── Debug ─────────────────────────────────────────────────────────
     prompt_tokens:    int  = field(default=0, repr=False)
 
+
+
+
+# ──────────────────────────────────────────────────────────────────────
+# GUARD: detect when insight is actually SQL (Gemini echoed the query)
+# ──────────────────────────────────────────────────────────────────────
+
+def _is_sql(text: Optional[str]) -> bool:
+    """Returns True if the text looks like SQL rather than a natural language insight."""
+    if not text:
+        return False
+    s = text.strip().upper()
+    return any(s.startswith(kw) for kw in ("SELECT", "WITH ", "INSERT", "UPDATE", "DELETE"))
+
+
+def _safe_insight(insight: Optional[str], fallback: str) -> Optional[str]:
+    """Returns insight if it looks like natural language; discards it if it looks like SQL."""
+    if _is_sql(insight):
+        logger.warning(
+            "[engine] insight field contains SQL — Gemini echoed the query. "
+            "Falling back to message field."
+        )
+        return fallback if fallback else None
+    return insight
 
 # ──────────────────────────────────────────────────────────────────────
 # PUBLIC: QUERY (blocking)
@@ -135,6 +160,9 @@ def query(text: str, debug: bool = False, thread_id: str = "main") -> NLPResult:
         except Exception as e:
             logger.warning(f"[engine] Chart generation failed (non-fatal): {e}")
 
+    # Guard: reject insight that is just the SQL echoed back by Gemini
+    insight = _safe_insight(agent_result["insight"], agent_result["final_message"])
+
     return NLPResult(
         success=agent_result["row_count"] > 0,
         query=text,
@@ -146,7 +174,7 @@ def query(text: str, debug: bool = False, thread_id: str = "main") -> NLPResult:
         needs_input=agent_result["needs_input"],
         message=agent_result["final_message"],
         error=agent_result["sql_error"],
-        insight=agent_result["insight"],
+        insight=insight,
         chart_path=chart_path,
         chart_type=chart_type,
         prompt_tokens=token_est if debug else 0,
@@ -259,7 +287,7 @@ def query_stream(text: str, debug: bool = False, thread_id: str = "main"):
         logger.warning(f"[engine] Chart generation failed (non-fatal): {e}")
 
     # ── Step 5: Stream the insight token-by-token ─────────────────────
-    final_synthesis: SynthesisResult | None = None
+    final_synthesis: Optional[SynthesisResult] = None
 
     for chunk in synthesise_stream(
         question=text,

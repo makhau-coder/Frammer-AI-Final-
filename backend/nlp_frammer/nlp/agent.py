@@ -32,7 +32,7 @@ import re
 import difflib
 import logging
 import duckdb
-from typing import TypedDict, Annotated, cast
+from typing import TypedDict, Annotated, cast, Optional
 import operator
 
 from dotenv import load_dotenv
@@ -97,10 +97,10 @@ class AgentState(TypedDict):
     schema:            str
     retrieved_tables:  list[str]
     generated_sql:     str
-    sql_error:         str | None
+    sql_error:         Optional[str]
     data:              list[dict]
     row_count:         int
-    insight:           str | None
+    insight:           Optional[str]
     needs_input:       bool
     cannot_answer:     bool
     final_message:     str

@@ -57,20 +57,22 @@ const pf = (v, dp = 1) => parseFloat(n(v).toFixed(dp));
 // ─────────────────────────────────────────────────────────────────────────────
 // KPI SECTION COMPONENT
 //
-// Behaviour:
-//  • Default: shows first `previewCount` (3) cards in a 3-col grid
-//  • headingInsight shown inline to the right of the label (disappears on expand)
-//  • "+N more" button appends remaining cards to the SAME grid (no separate panel)
-//  • Expanded cards each show their own detailed insight below them
+// Layout: 2 rows of 3 cards each.
+//  - Row 1 (cards 0–2): always visible
+//  - Row 2 (cards 3–5): hidden behind "+3 more" toggle
+//  - headingInsight shown inline beside the label (fades when row 2 is open)
 // ─────────────────────────────────────────────────────────────────────────────
-function KpiSection({ icon: Icon, label, color, cards, previewCount = 3, headingInsight }) {
+function KpiSection({ icon: Icon, label, color, cards, headingInsight }) {
   const [expanded, setExpanded] = useState(false);
-  const hiddenN = cards.length - previewCount;
+
+  const row1   = cards.slice(0, 3);
+  const row2   = cards.slice(3, 6);
+  const hasRow2 = row2.length > 0;
 
   return (
     <div className="mb-6">
 
-      {/* Section heading: Icon | LABEL | ──── | inline insight (fades out on expand) | ──── */}
+      {/* Section heading */}
       <div className={`flex items-center gap-2 mb-3 mt-2 ${color}`}>
         <Icon className="h-4 w-4 shrink-0" />
         <span className="text-xs font-bold uppercase tracking-widest whitespace-nowrap">{label}</span>
@@ -93,52 +95,57 @@ function KpiSection({ icon: Icon, label, color, cards, previewCount = 3, heading
         <div className="flex-1 h-px bg-border/60 min-w-[8px]" />
       </div>
 
-      {/* Unified grid — preview cards always present, extras appended when expanded */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {/* Always-visible preview cards */}
-        {cards.slice(0, previewCount).map((card, i) => (
+      {/* Row 1 — always visible */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {row1.map((card, i) => (
           <motion.div key={card.title}
             initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.04 }}>
             <KpiCard {...card} />
           </motion.div>
         ))}
-
-        {/* Extra cards — appended into the same grid when expanded */}
-        <AnimatePresence>
-          {expanded && cards.slice(previewCount).map((card, i) => (
-            <motion.div key={card.title}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 8 }}
-              transition={{ delay: i * 0.04 }}>
-              <KpiCard {...card} />
-              {card.insight && (
-                <div className="mt-1 px-3 py-2 rounded-lg bg-muted/30 border border-border/40 text-[10px] text-muted-foreground leading-relaxed flex gap-1.5">
-                  <Lightbulb className="h-3 w-3 shrink-0 mt-0.5 text-yellow-400" />
-                  <span>{card.insight}</span>
-                </div>
-              )}
-            </motion.div>
-          ))}
-        </AnimatePresence>
       </div>
 
-      {/* Toggle button */}
-      {hiddenN > 0 && (
-        <button
-          onClick={() => setExpanded(v => !v)}
-          className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-        >
-          {expanded
-            ? <><ChevronUp   className="h-3.5 w-3.5" />Show less</>
-            : <><ChevronDown className="h-3.5 w-3.5" />+{hiddenN} more KPIs with insights</>}
-        </button>
+      {/* Row 2 — collapsible */}
+      {hasRow2 && (
+        <>
+          <AnimatePresence>
+            {expanded && (
+              <motion.div
+                key="row2"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.2 }}
+                className="overflow-hidden"
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+                  {row2.map((card, i) => (
+                    <motion.div key={card.title}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.04 }}>
+                      <KpiCard {...card} />
+                    </motion.div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <button
+            onClick={() => setExpanded(v => !v)}
+            className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {expanded
+              ? <><ChevronUp   className="h-3.5 w-3.5" />Show less</>
+              : <><ChevronDown className="h-3.5 w-3.5" />+{row2.length} more KPIs with insights</>}
+          </button>
+        </>
       )}
     </div>
   );
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // PAGE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -280,13 +287,26 @@ export default function ExecutiveOverview() {
   return (
     <DashboardLayout title="Executive Overview">
 
-      <KpiSection icon={BarChart2} label="Core Funnel"           color="text-indigo-400" cards={coreFunnelCards}       previewCount={3} headingInsight={hi.coreFunnel} />
-      <KpiSection icon={Zap}       label="AI Efficiency"         color="text-yellow-400" cards={aiEfficiencyCards}     previewCount={3} headingInsight={hi.aiEfficiency} />
-      <KpiSection icon={Clock}     label="Duration & Compute"    color="text-cyan-400"   cards={durationCards}         previewCount={3} headingInsight={hi.duration} />
-      <KpiSection icon={Radio}     label="Channel Health"        color="text-green-400"  cards={channelHealthCards}    previewCount={3} headingInsight={hi.channelHealth} />
-      <KpiSection icon={Users}     label="User Highlights"       color="text-purple-400" cards={userHighlightCards}    previewCount={3} headingInsight={hi.userHighlights} />
-      <KpiSection icon={Globe}     label="Language Intelligence" color="text-teal-400"   cards={languageCards}         previewCount={3} headingInsight={hi.language} />
-      <KpiSection icon={Calendar}  label="Monthly Benchmarks"    color="text-orange-400" cards={monthlyBenchmarkCards} previewCount={3} headingInsight={hi.monthlyBenchmarks} />
+      {/* ── KPI rows: 2 sections side by side ──────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-2">
+        <KpiSection icon={BarChart2} label="Core Funnel"        color="text-indigo-400" cards={coreFunnelCards}    headingInsight={hi.coreFunnel} />
+        <KpiSection icon={Zap}       label="AI Efficiency"      color="text-yellow-400" cards={aiEfficiencyCards}  headingInsight={hi.aiEfficiency} />
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-2">
+        <KpiSection icon={Clock}  label="Duration & Compute" color="text-cyan-400"   cards={durationCards}      headingInsight={hi.duration} />
+        <KpiSection icon={Radio}  label="Channel Health"     color="text-green-400"  cards={channelHealthCards}  headingInsight={hi.channelHealth} />
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-2">
+        <KpiSection icon={Users}    label="User Highlights"       color="text-purple-400" cards={userHighlightCards}    headingInsight={hi.userHighlights} />
+        <KpiSection icon={Globe}    label="Language Intelligence" color="text-teal-400"   cards={languageCards}         headingInsight={hi.language} />
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-2">
+        <KpiSection icon={Calendar} label="Monthly Benchmarks"   color="text-orange-400" cards={monthlyBenchmarkCards} headingInsight={hi.monthlyBenchmarks} />
+        <div />{/* spacer — odd section out */}
+      </div>
 
       {/* ── FUNNEL & WASTE ────────────────────────────────────────── */}
       <SectionLabel icon={Target} label="Funnel & Waste" color="text-red-400" />

@@ -1,0 +1,35 @@
+# Byte-compiled / optimised / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Development tooling
+.git/
+.gitignore
+.env           # secrets — injected at runtime via docker-compose env_file
+
+# Jupyter
+notebooks/
+*.ipynb
+
+# Generated chart cache (rebuilt at runtime)
+data/charts/
+
+# ChromaDB vector store (rebuilt by build_index.py or mounted as a volume)
+nlp_frammer/data/chroma_db/
+
+# Test artefacts
+.pytest_cache/
+*.log

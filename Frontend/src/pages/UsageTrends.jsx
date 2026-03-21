@@ -9,7 +9,8 @@ import { ArrowUp, ArrowDown, GitCompare, Lightbulb } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 
-const API = "http://localhost:8000";
+import { BASE_URL } from "@/lib/api";
+const API = BASE_URL || "http://localhost:8000";
 const TT = { contentStyle: { background: "#1a1b1e", border: "1px solid #333", borderRadius: 8, fontSize: 11, color: "#e0e0e0" } };
 const AX = { tick: { fontSize: 10, fill: "#888" }, axisLine: { stroke: "#333" }, tickLine: false };
 const C  = { blue: "#06b6d4", green: "#22c55e", red: "#ef4444", orange: "#f59e0b", purple: "#8b5cf6", indigo: "#6366f1" };

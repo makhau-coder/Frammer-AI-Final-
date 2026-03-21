@@ -8,6 +8,7 @@
 # Used at query time via: get_collection()
 
 import os
+from typing import Optional
 import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
@@ -31,7 +32,7 @@ ALL_CHUNKS = METADATA + METRICS + EXAMPLES
 # CLIENT + EMBEDDING FUNCTION
 # ──────────────────────────────────────────────────────────────────────
 
-def _get_client() -> chromadb.PersistentClient:
+def _get_client():
     """Returns a persistent ChromaDB client pointing to data/chroma_db/."""
     os.makedirs(CHROMA_DB_PATH, exist_ok=True)
     return chromadb.PersistentClient(path=CHROMA_DB_PATH)
@@ -51,7 +52,7 @@ def _get_embedding_fn() -> SentenceTransformerEmbeddingFunction:
 # PUBLIC: GET COLLECTION (used by retriever at query time)
 # ──────────────────────────────────────────────────────────────────────
 
-def get_collection() -> chromadb.Collection:
+def get_collection():
     """
     Returns the ChromaDB collection for querying.
 

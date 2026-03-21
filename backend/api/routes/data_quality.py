@@ -458,12 +458,17 @@ def _table_exists(tbl):
 # Routes
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.get("/data-quality")
+@router.get("/data-quality", operation_id="get_data_quality_report")
 def get_data_quality():
     """
     Per-file quality audit of all 11 raw CSV files.
     Returns individual file reports plus an overall summary.
     """
+    # Return cached result if fresh
+    now = _time.time()
+    if _DQ_CACHE.get("ts", 0) + _DQ_CACHE_TTL > now:
+        return _DQ_CACHE["result"]
+
     file_reports = []
     errors       = []
 
@@ -504,7 +509,7 @@ def get_data_quality():
         if rows and rows[0][0]:
             last_ran = rows[0][0]
 
-    return {
+    result = {
         "summary": {
             "files_checked"   : len(file_reports),
             "total_issues"    : total_issues,
@@ -516,9 +521,12 @@ def get_data_quality():
         },
         "files": file_reports,
     }
+    _DQ_CACHE["result"] = result
+    _DQ_CACHE["ts"]     = _time.time()
+    return result
 
 
-@router.get("/data-quality/checks")
+@router.get("/data-quality/checks", operation_id="get_validation_checks")
 def get_validation_checks():
     """
     Returns all individual validation check results from the last ETL run.

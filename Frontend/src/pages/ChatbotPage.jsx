@@ -16,13 +16,14 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import {
-  Send, Loader2, Bot, User, AlertTriangle, XCircle,
+  Send, Loader2, User, AlertTriangle, XCircle,
   ChevronDown, ChevronUp, Database, Sparkles, Copy,
   Check, BarChart2, Table2, Code2, Lightbulb,
-  HelpCircle, ArrowRight, RotateCcw, MessageSquarePlus,
+  HelpCircle, ArrowRight, MessageSquarePlus,
 } from "lucide-react";
 
-const API = "http://localhost:8000";
+import { BASE_URL } from "@/lib/api";
+const API = BASE_URL || "http://localhost:8000";
 
 const STARTERS = [
   { icon: "📈", text: "Show me the monthly upload trend" },
@@ -98,7 +99,7 @@ export default function ChatbotPage() {
     setLoading(false);
     setTimeout(() => inputRef.current?.focus(), 50);
   }
-}, [input, loading]);
+}, [input, loading, sessionId]);
 
   const handleKey = (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }

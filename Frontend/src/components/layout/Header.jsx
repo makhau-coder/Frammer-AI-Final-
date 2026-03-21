@@ -5,6 +5,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
+import { BASE_URL } from '@/lib/api';
 
 // ─── Live clock ───────────────────────────────────────────────────────
 function LiveClock() {
@@ -33,7 +34,7 @@ function KpiTicker() {
   const { data: monthlyData = [] } = useQuery({
     queryKey: ['monthlyData'],
     queryFn: async () => {
-      const res = await fetch("http://localhost:8000/api/monthly");
+      const res = await fetch(`${BASE_URL || "http://localhost:8000"}/api/monthly`);
       if (!res.ok) return [];
       const data = await res.json();
       return Array.isArray(data)

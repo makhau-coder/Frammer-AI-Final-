@@ -15,6 +15,7 @@
 from __future__ import annotations
 import logging
 import time
+from typing import Optional
 from dataclasses import dataclass
 from nlp.vector_store import get_collection
 from sentence_transformers import CrossEncoder
@@ -47,7 +48,7 @@ RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 # RERANKER SINGLETON — loaded once, reused for every query
 # ──────────────────────────────────────────────────────────────────────
 
-_reranker: CrossEncoder | None = None
+_reranker: Optional[CrossEncoder] = None
 
 
 def _get_reranker() -> CrossEncoder:
