@@ -1,0 +1,10 @@
+Question: How many videos has each user uploaded at the individual video level?
+SQL:
+SELECT uploaded_by,
+       COUNT(*) AS total_videos,
+       SUM(CASE WHEN published THEN 1 ELSE 0 END) AS published_videos,
+       ROUND(SUM(CASE WHEN published THEN 1 ELSE 0 END) * 100.0
+           / NULLIF(COUNT(*), 0), 2) AS publish_rate_pct
+FROM video_list
+GROUP BY uploaded_by
+ORDER BY total_videos DESC;by\nct

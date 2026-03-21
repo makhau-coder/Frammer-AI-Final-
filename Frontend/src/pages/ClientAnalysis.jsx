@@ -102,7 +102,7 @@ export default function ClientAnalysis() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
         {/* Platform bar */}
-        <ChartBox title="Videos Published by Platform">
+        <ChartBox title="Videos Published by Platform" insight="YouTube and Instagram typically dominate publishing. Channels concentrating on fewer platforms may achieve higher quality control and audience engagement.">
           {platformData.length === 0
             ? <NoData msg="No platform data. Check if /api/publishing-platforms is returning data." />
             : <ResponsiveContainer width="100%" height={260}>
@@ -118,7 +118,7 @@ export default function ClientAnalysis() {
         </ChartBox>
 
         {/* Platform pie */}
-        <ChartBox title="Platform Distribution">
+        <ChartBox title="Platform Distribution" insight="A highly skewed distribution means the platform is heavily dependent on one or two channels. Diversifying distribution reduces risk and expands audience reach.">
           {platformData.length === 0
             ? <NoData />
             : <ResponsiveContainer width="100%" height={260}>
@@ -139,7 +139,7 @@ export default function ClientAnalysis() {
         </ChartBox>
 
         {/* Channel: Processed vs Published */}
-        <ChartBox title="Channels: Processed vs Published">
+        <ChartBox title="Channels: Processed vs Published" insight="Channels with a large gap between processed and published clips represent the biggest AI compute waste. These channels need editorial throughput improvements.">
           {channelData.length === 0
             ? <NoData />
             : <ResponsiveContainer width="100%" height={260}>
@@ -156,7 +156,7 @@ export default function ClientAnalysis() {
         </ChartBox>
 
         {/* Channel publish rate */}
-        <ChartBox title="Channel Publish Rate (%)">
+        <ChartBox title="Channel Publish Rate (%)" insight="High-performing channels demonstrate that quality editorial workflows are achievable. Low-rate channels should study the processes of high-rate channels.">
           {channelData.length === 0
             ? <NoData />
             : <ResponsiveContainer width="100%" height={260}>
@@ -172,7 +172,7 @@ export default function ClientAnalysis() {
         </ChartBox>
 
         {/* Language */}
-        <ChartBox title="Language: Created vs Published">
+        <ChartBox title="Language: Created vs Published" insight="English content achieves a significantly higher publish rate than Hindi. This gap suggests language-specific editorial standards or reviewer availability issues.">
           {languageData.length === 0
             ? <NoData />
             : <ResponsiveContainer width="100%" height={260}>
@@ -189,7 +189,7 @@ export default function ClientAnalysis() {
         </ChartBox>
 
         {/* User productivity */}
-        <ChartBox title="Top 10 Users: Uploaded vs Published">
+        <ChartBox title="Top 10 Users: Uploaded vs Published" insight="Users with many uploads but few publishes have a large backlog of unreviewed content. These users would benefit most from improved review processes or automation.">
           {userData.length === 0
             ? <NoData />
             : <ResponsiveContainer width="100%" height={260}>
@@ -206,7 +206,7 @@ export default function ClientAnalysis() {
         </ChartBox>
 
         {/* Channel efficiency scatter */}
-        <ChartBox title="Channel Efficiency (Processed vs Published)">
+        <ChartBox title="Channel Efficiency (Processed vs Published)" insight="Channels near the diagonal line are efficient — they publish a proportional share of what they generate. Outliers above the line have severe waste, those below undergenerate.">
           {channelData.length === 0
             ? <NoData />
             : <ResponsiveContainer width="100%" height={260}>
@@ -282,11 +282,17 @@ function KpiBox({ label, value }) {
   );
 }
 
-function ChartBox({ title, children }) {
+function ChartBox({ title, insight, children }) {
   return (
     <div className="rounded-lg border bg-card p-4">
       <h3 className="mb-3 text-sm font-medium">{title}</h3>
       {children}
+      {insight && (
+        <div className="mt-3 pt-3 border-t border-border/40 flex gap-2 text-[11px] text-muted-foreground leading-relaxed">
+          <span className="text-yellow-400 shrink-0">💡</span>
+          <span>{insight}</span>
+        </div>
+      )}
     </div>
   );
 }

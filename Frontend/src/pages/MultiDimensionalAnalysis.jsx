@@ -215,6 +215,10 @@ export default function MultiDimensionalAnalysis() {
               </BarChart>
             </ResponsiveContainer>
           )}
+          <div className="mt-3 pt-3 border-t border-border/40 flex gap-2 text-[11px] text-muted-foreground leading-relaxed">
+            <span className="text-yellow-400 shrink-0">💡</span>
+            <span>Stacked bars show how the top dimension is distributed across the second dimension. Tall single-color bars indicate concentration — the entity relies on one sub-category. Mixed-color bars indicate healthy diversification.</span>
+          </div>
         </div>
 
         {/* Insights */}
@@ -268,6 +272,10 @@ export default function MultiDimensionalAnalysis() {
               </BarChart>
             </ResponsiveContainer>
           )}
+          <div className="mt-3 pt-3 border-t border-border/40 flex gap-2 text-[11px] text-muted-foreground">
+            <span className="text-yellow-400 shrink-0">💡</span>
+            <span>Volume leaders drive most of the platform output. If one entity dominates, consider whether workload is balanced or whether there is a dependency risk.</span>
+          </div>
         </div>
 
         {/* Publish rate */}
@@ -285,6 +293,10 @@ export default function MultiDimensionalAnalysis() {
               </BarChart>
             </ResponsiveContainer>
           )}
+          <div className="mt-3 pt-3 border-t border-border/40 flex gap-2 text-[11px] text-muted-foreground">
+            <span className="text-yellow-400 shrink-0">💡</span>
+            <span>Publish rate leaders demonstrate what is achievable with good editorial workflow. Near-zero performers may need process review or could be candidates for consolidation.</span>
+          </div>
         </div>
 
       </div>
@@ -294,6 +306,10 @@ export default function MultiDimensionalAnalysis() {
         <h3 className="mb-3 text-sm font-medium">
           Heatmap: {dim1} × {dim2} (published clips)
         </h3>
+        <p className="mb-3 flex gap-1.5 text-[11px] text-muted-foreground">
+          <span className="text-yellow-400">💡</span>
+          Darker cells indicate stronger publishing relationships between the two dimensions. Dark rows show high-output entities across all categories. Dark columns indicate popular target categories.
+        </p>
         {pivot.rows.length === 0 ? (
           <p className="text-xs text-muted-foreground">No data for this combination.</p>
         ) : (

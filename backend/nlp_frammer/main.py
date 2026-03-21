@@ -2,13 +2,14 @@
 # Interactive test harness — run queries from the terminal.
 #
 # Usage:
-#   python main.py
-#   python main.py --debug     # shows token count + raw Gemini response
+#   python main.py                    # standard (blocking) mode
+#   python main.py --debug            # shows token count + retrieved tables
+#   python main.py --stream           # streams the insight token-by-token
+#   python main.py --stream --debug   # both
 
 
 import sys
 import os
-import json
 from dotenv import load_dotenv
 
 
@@ -16,16 +17,43 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(__file__))
 
 
-from nlp.engine import query
+from nlp.engine import query, query_stream, NLPResult
 
 
-DEBUG = "--debug" in sys.argv
+DEBUG  = "--debug"  in sys.argv
+STREAM = "--stream" in sys.argv
 
 
 print("━" * 60)
 print("  Frammer NLP Engine — Interactive Test")
-print("  Type your question. Ctrl+C to exit.")
+mode_label = "streaming" if STREAM else "standard"
+print(f"  Mode: {mode_label}  |  Type your question.")
+print("  'reset' to clear history. 'exit' to quit.")
 print("━" * 60)
+
+
+def _print_result(result: NLPResult) -> None:
+    """Shared display logic for both streaming and non-streaming paths."""
+    print()
+
+    if result.needs_input:
+        print(f"🤔  {result.message}")
+
+    elif result.cannot_answer:
+        print(f"⛔  {result.message}")
+
+    elif not result.success and result.error:
+        print(f"❌  {result.error}")
+
+    else:
+        print(f"Data: {result.data}")
+        print(f"✅  {result.row_count} row(s)")
+        if result.chart_path:
+            print(f"\n📈  {result.chart_path}  [{result.chart_type}]")
+
+    if DEBUG:
+        print(f"\n🔍  Tables : {result.retrieved_tables}")
+        print(f"🔍  SQL    : {result.sql}")
 
 
 while True:
@@ -33,46 +61,78 @@ while True:
         text = input("\n❓ ").strip()
         if not text:
             continue
+        if text.lower() in ("exit", "quit"):
+            break
+        if text.lower() in ("reset", "clear"):
+            from nlp.agent import clear_memory
+            clear_memory()
+            print("🔄  History cleared.")
+            continue
 
-        result = query(text, debug=DEBUG)
+        if STREAM:
+            # ── Streaming path ────────────────────────────────────────
+            # query_stream() yields str chunks while Gemini is typing,
+            # then yields a final NLPResult as the last item.
+            result: NLPResult | None = None
+            insight_started = False
 
-        print()
+            for chunk in query_stream(text, debug=DEBUG):
+                if isinstance(chunk, str):
+                    if not insight_started:
+                        # Print the label just before the first token arrives
+                        print("\n💡  ", end="", flush=True)
+                        insight_started = True
+                    print(chunk, end="", flush=True)
+                else:
+                    result = chunk   # NLPResult — stream is complete
 
-        # ── Cannot answer ─────────────────────────────────────────────
-        if result.cannot_answer:
-            print(f"⛔  CANNOT ANSWER: {result.error}")
+            if insight_started:
+                print()   # newline after streamed insight
 
-        # ── Hard error ────────────────────────────────────────────────
-        elif not result.success:
-            print(f"❌  ERROR: {result.error}")
-            if result.sql:
-                print(f"\n    SQL attempted:\n    {result.sql}")
+            if result is not None:
+                # Print everything except the insight (already streamed above)
+                print()
+                if result.needs_input:
+                    print(f"🤔  {result.message}")
+                elif result.cannot_answer:
+                    print(f"⛔  {result.message}")
+                elif not result.success and result.error:
+                    print(f"❌  {result.error}")
+                else:
+                    print(f"Data: {result.data}")
+                    print(f"✅  {result.row_count} row(s)")
+                    if result.chart_path:
+                        print(f"\n📈  {result.chart_path}  [{result.chart_type}]")
 
-        # ── Success ───────────────────────────────────────────────────
+                if DEBUG:
+                    print(f"\n🔍  Tables : {result.retrieved_tables}")
+                    print(f"🔍  SQL    : {result.sql}")
+
         else:
-            print(f"✅  {result.row_count} row(s) returned")
+            # ── Standard (blocking) path — identical to original ──────
+            result = query(text, debug=DEBUG)
+            print()
 
-            print(f"\n📋  SQL:\n{result.sql}")
+            if result.needs_input:
+                print(f"🤔  {result.message}")
 
-            print(f"\n📊  Data:\n{json.dumps(result.data, indent=2, default=str)}")
+            elif result.cannot_answer:
+                print(f"⛔  {result.message}")
 
-            # Insight
-            if result.insight:
-                print(f"\n💡  Insight:\n{result.insight}")
+            elif not result.success and result.error:
+                print(f"❌  {result.error}")
+
             else:
-                print("\n💡  Insight: (not generated)")
+                print(f"Data: {result.data}")
+                print(f"✅  {result.row_count} row(s)")
+                if result.message:
+                    print(f"\n💡  {result.message}")
+                if result.chart_path:
+                    print(f"\n📈  {result.chart_path}  [{result.chart_type}]")
 
-            # Chart
-            if result.chart_path:
-                print(f"\n📈  Chart  : {result.chart_path}  [{result.chart_type}]")
-            else:
-                print(f"\n📈  Chart  : (not generated — single stat or unsupported shape)")
-
-        # ── Debug ─────────────────────────────────────────────────────
-        if DEBUG:
-            print(f"\n🔍  Tables retrieved : {result.retrieved_tables}")
-            print(f"🔍  Prompt tokens    : ~{result.prompt_tokens}")
-            print(f"🔍  Raw response     :\n{result.raw_response}")
+            if DEBUG:
+                print(f"\n🔍  Tables : {result.retrieved_tables}")
+                print(f"🔍  SQL    : {result.sql}")
 
     except KeyboardInterrupt:
         print("\n\nBye.")

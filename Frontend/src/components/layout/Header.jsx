@@ -88,8 +88,8 @@ function KpiTicker() {
           exit={{ opacity: 0, y: -6 }}
           transition={{ duration: 0.3 }}
           className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-[11px] font-medium tracking-wide ${up ? 'bg-emerald-500/8 border-emerald-500/20 text-emerald-400'
-              : down ? 'bg-red-500/8 border-red-500/20 text-red-400'
-                : 'bg-muted/40 border-border/30 text-muted-foreground/60'
+            : down ? 'bg-red-500/8 border-red-500/20 text-red-400'
+              : 'bg-muted/40 border-border/30 text-muted-foreground/60'
             }`}
         >
           {up && <TrendingUp className="h-3 w-3 shrink-0" />}

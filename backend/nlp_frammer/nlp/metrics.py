@@ -3,14 +3,17 @@
 # Defines all business KPIs, formulas, and derived metrics.
 # Each entry is a chunk embedded into ChromaDB.
 #
-# GROUND TRUTH column names (verified 2026-03-13):
-#   monthly_chart:          "Total Uploaded", "Total Created", "Total Published"
-#   all combined_data_*:    "Uploaded Count", "Created Count", "Published Count"
-#   all combined_data_*:    "Uploaded Duration (hh:mm:ss)_secs/_raw"
-#   month_wise_duration:    "Total Uploaded/Created/Published Duration_secs/_raw"
+# GROUND TRUTH column names (verified 2026-03-20):
+#   monthly_chart:           "Total Uploaded", "Total Created", "Total Published"
+#   all combined_data_*:     "Uploaded Count", "Created Count", "Published Count"
+#   all combined_data_*:     "Uploaded Duration (hh:mm:ss)_secs/_raw"
+#   month_wise_duration:     "Total Uploaded/Created/Published Duration_secs/_raw"
 #   channel_wise_publishing: WIDE — one column per platform, NO "Total Published"
-#   channel_wise_pub_dur:   "<Platform> Duration_secs/_raw" per platform
-#   user column:            "User" (NOT "Uploaded By")
+#   channel_wise_publishing_duration:    "<Platform> Duration_secs/_raw" per platform
+#   user column:             "User" (NOT "Uploaded By")
+#
+# ORDERING RULE: Always use STRPTIME("Month", '%b, %Y') for chronological
+# ordering of Month columns. Plain ORDER BY "Month" sorts alphabetically.
 
 METRICS: list[dict] = [
 
@@ -21,12 +24,12 @@ METRICS: list[dict] = [
     {
         "id": "metric_total_uploaded",
         "type": "metric",
-        "tables": ["monthly_chart", "client_1_combined_data_2025_3_1_2026_2_28",
-                   "combined_data_2025_3_1_2026_2_28_by_user",
-                   "combined_data_2025_3_1_2026_2_28_by_channel_and_user",
-                   "combined_data_2025_3_1_2026_2_28_by_input_type",
-                   "combined_data_2025_3_1_2026_2_28_by_output_type",
-                   "combined_data_2025_3_1_2026_2_28_by_language"],
+        "tables": ["monthly_chart", "client_1_combined_data2025_3_1_2026_2_28",
+                   "combined_data2025_3_1_2026_2_28_by_user",
+                   "combined_data2025_3_1_2026_2_28_by_channel_and_user",
+                   "combined_data2025_3_1_2026_2_28_by_input_type",
+                   "combined_data2025_3_1_2026_2_28_by_output_type",
+                   "combined_data2025_3_1_2026_2_28_by_language"],
         "text": """
 Metric: Total Uploaded / Uploaded Count
 Definition:
@@ -45,8 +48,8 @@ Important distinction:
 
 Available at these dimensions:
     - Monthly level:        monthly_chart                              → "Total Uploaded"
-    - Channel level:        client_1_combined_data_2025_3_1_2026_2_28 → "Uploaded Count"
-    - User level:           combined_data_2025_3_1_2026_2_28_by_user  → "Uploaded Count"
+    - Channel level:        client_1_combined_data2025_3_1_2026_2_28 → "Uploaded Count"
+    - User level:           combined_data2025_3_1_2026_2_28_by_user  → "Uploaded Count"
     - Channel × User:       combined_data_..._by_channel_and_user     → "Uploaded Count"
     - Input type level:     combined_data_..._by_input_type           → "Uploaded Count"
     - Output type level:    combined_data_..._by_output_type          → "Uploaded Count"
@@ -54,25 +57,25 @@ Available at these dimensions:
 
 Example SQL (uploads by user):
     SELECT "User", "Uploaded Count"
-    FROM combined_data_2025_3_1_2026_2_28_by_user
+    FROM combined_data2025_3_1_2026_2_28_by_user
     ORDER BY "Uploaded Count" DESC;
 
-Example SQL (total uploads by month):
+Example SQL (total uploads by month — chronological order):
     SELECT "Month", "Total Uploaded"
     FROM monthly_chart
-    ORDER BY "Month";
+    ORDER BY STRPTIME("Month", '%b, %Y');
 """
     },
 
     {
         "id": "metric_total_created",
         "type": "metric",
-        "tables": ["monthly_chart", "client_1_combined_data_2025_3_1_2026_2_28",
-                   "combined_data_2025_3_1_2026_2_28_by_user",
-                   "combined_data_2025_3_1_2026_2_28_by_channel_and_user",
-                   "combined_data_2025_3_1_2026_2_28_by_input_type",
-                   "combined_data_2025_3_1_2026_2_28_by_output_type",
-                   "combined_data_2025_3_1_2026_2_28_by_language"],
+        "tables": ["monthly_chart", "client_1_combined_data2025_3_1_2026_2_28",
+                   "combined_data2025_3_1_2026_2_28_by_user",
+                   "combined_data2025_3_1_2026_2_28_by_channel_and_user",
+                   "combined_data2025_3_1_2026_2_28_by_input_type",
+                   "combined_data2025_3_1_2026_2_28_by_output_type",
+                   "combined_data2025_3_1_2026_2_28_by_language"],
         "text": """
 Metric: Total Created / Created Count
 Definition:
@@ -95,7 +98,7 @@ Example SQL (creation multiplier by month — uses monthly_chart):
            ROUND("Total Created" * 1.0 / NULLIF("Total Uploaded", 0), 2)
                AS creation_multiplier
     FROM monthly_chart
-    ORDER BY "Month";
+    ORDER BY STRPTIME("Month", '%b, %Y');
 
 Example SQL (creation multiplier by channel — uses combined table):
     SELECT "Channel",
@@ -103,7 +106,7 @@ Example SQL (creation multiplier by channel — uses combined table):
            "Created Count",
            ROUND("Created Count" * 1.0 / NULLIF("Uploaded Count", 0), 2)
                AS creation_multiplier
-    FROM client_1_combined_data_2025_3_1_2026_2_28
+    FROM client_1_combined_data2025_3_1_2026_2_28
     ORDER BY creation_multiplier DESC;
 """
     },
@@ -112,11 +115,11 @@ Example SQL (creation multiplier by channel — uses combined table):
         "id": "metric_total_published",
         "type": "metric",
         "tables": ["monthly_chart", "channel_wise_publishing",
-                   "client_1_combined_data_2025_3_1_2026_2_28",
-                   "combined_data_2025_3_1_2026_2_28_by_user",
-                   "combined_data_2025_3_1_2026_2_28_by_input_type",
-                   "combined_data_2025_3_1_2026_2_28_by_output_type",
-                   "combined_data_2025_3_1_2026_2_28_by_language"],
+                   "client_1_combined_data2025_3_1_2026_2_28",
+                   "combined_data2025_3_1_2026_2_28_by_user",
+                   "combined_data2025_3_1_2026_2_28_by_input_type",
+                   "combined_data2025_3_1_2026_2_28_by_output_type",
+                   "combined_data2025_3_1_2026_2_28_by_language"],
         "text": """
 Metric: Total Published / Published Count
 Definition:
@@ -135,10 +138,10 @@ CRITICAL — Column name differs by table:
 Key insight:
     Published << Created. Not all created outputs pass editorial review.
 
-Example SQL (total published by month):
+Example SQL (total published by month — chronological order):
     SELECT "Month", "Total Published"
     FROM monthly_chart
-    ORDER BY "Month";
+    ORDER BY STRPTIME("Month", '%b, %Y');
 
 Example SQL (total published per channel across all platforms):
     SELECT "Channel",
@@ -149,7 +152,7 @@ Example SQL (total published per channel across all platforms):
 
 Example SQL (published count by user):
     SELECT "User", "Published Count"
-    FROM combined_data_2025_3_1_2026_2_28_by_user
+    FROM combined_data2025_3_1_2026_2_28_by_user
     ORDER BY "Published Count" DESC;
 """
     },
@@ -161,12 +164,12 @@ Example SQL (published count by user):
     {
         "id": "metric_publish_rate",
         "type": "metric",
-        "tables": ["monthly_chart", "client_1_combined_data_2025_3_1_2026_2_28",
-                   "combined_data_2025_3_1_2026_2_28_by_user",
-                   "combined_data_2025_3_1_2026_2_28_by_input_type",
-                   "combined_data_2025_3_1_2026_2_28_by_output_type",
-                   "combined_data_2025_3_1_2026_2_28_by_language",
-                   "combined_data_2025_3_1_2026_2_28_by_channel_and_user"],
+        "tables": ["monthly_chart", "client_1_combined_data2025_3_1_2026_2_28",
+                   "combined_data2025_3_1_2026_2_28_by_user",
+                   "combined_data2025_3_1_2026_2_28_by_input_type",
+                   "combined_data2025_3_1_2026_2_28_by_output_type",
+                   "combined_data2025_3_1_2026_2_28_by_language",
+                   "combined_data2025_3_1_2026_2_28_by_channel_and_user"],
         "text": """
 Metric: Publish Rate
 Definition:
@@ -177,7 +180,7 @@ Formula:
     Publish Rate (%) = (Published / Created) * 100
 
 CRITICAL — Use correct column names per table:
-    monthly_chart:          "Total Published" / "Total Created"
+    monthly_chart:            "Total Published" / "Total Created"
     ALL other summary tables: "Published Count" / "Created Count"
 
 Always wrap denominator in NULLIF(..., 0) to avoid division by zero.
@@ -187,14 +190,14 @@ Interpretation:
     < 10%: Most content is filtered out before publishing.
       0%:  Content was created but nothing published that period.
 
-Example SQL (publish rate by month):
+Example SQL (publish rate by month — chronological order):
     SELECT "Month",
            "Total Created",
            "Total Published",
            ROUND("Total Published" * 100.0 / NULLIF("Total Created", 0), 2)
                AS publish_rate_pct
     FROM monthly_chart
-    ORDER BY "Month";
+    ORDER BY STRPTIME("Month", '%b, %Y');
 
 Example SQL (publish rate by user):
     SELECT "User",
@@ -202,7 +205,7 @@ Example SQL (publish rate by user):
            "Published Count",
            ROUND("Published Count" * 100.0 / NULLIF("Created Count", 0), 2)
                AS publish_rate_pct
-    FROM combined_data_2025_3_1_2026_2_28_by_user
+    FROM combined_data2025_3_1_2026_2_28_by_user
     ORDER BY publish_rate_pct DESC;
 
 Example SQL (publish rate by channel):
@@ -211,7 +214,7 @@ Example SQL (publish rate by channel):
            "Published Count",
            ROUND("Published Count" * 100.0 / NULLIF("Created Count", 0), 2)
                AS publish_rate_pct
-    FROM client_1_combined_data_2025_3_1_2026_2_28
+    FROM client_1_combined_data2025_3_1_2026_2_28
     ORDER BY publish_rate_pct DESC;
 
 Example SQL (publish rate by input type):
@@ -220,7 +223,7 @@ Example SQL (publish rate by input type):
            "Published Count",
            ROUND("Published Count" * 100.0 / NULLIF("Created Count", 0), 2)
                AS publish_rate_pct
-    FROM combined_data_2025_3_1_2026_2_28_by_input_type
+    FROM combined_data2025_3_1_2026_2_28_by_input_type
     ORDER BY publish_rate_pct DESC;
 """
     },
@@ -228,9 +231,9 @@ Example SQL (publish rate by input type):
     {
         "id": "metric_creation_multiplier",
         "type": "metric",
-        "tables": ["monthly_chart", "client_1_combined_data_2025_3_1_2026_2_28",
-                   "combined_data_2025_3_1_2026_2_28_by_user",
-                   "combined_data_2025_3_1_2026_2_28_by_channel_and_user"],
+        "tables": ["monthly_chart", "client_1_combined_data2025_3_1_2026_2_28",
+                   "combined_data2025_3_1_2026_2_28_by_user",
+                   "combined_data2025_3_1_2026_2_28_by_channel_and_user"],
         "text": """
 Metric: Creation Multiplier (also called Output Ratio)
 Definition:
@@ -248,7 +251,7 @@ Interpretation:
     5x = Frammer generates 5 output clips per source video.
     Higher = more productive. < 1 would be unusual.
 
-Example SQL (by month):
+Example SQL (by month — chronological order):
     SELECT "Month",
            ROUND("Total Created" * 1.0 / NULLIF("Total Uploaded", 0), 2)
                AS creation_multiplier
@@ -261,7 +264,7 @@ Example SQL (by channel):
            "Created Count",
            ROUND("Created Count" * 1.0 / NULLIF("Uploaded Count", 0), 2)
                AS creation_multiplier
-    FROM client_1_combined_data_2025_3_1_2026_2_28
+    FROM client_1_combined_data2025_3_1_2026_2_28
     ORDER BY creation_multiplier DESC;
 
 Example SQL (by user):
@@ -270,7 +273,7 @@ Example SQL (by user):
            "Created Count",
            ROUND("Created Count" * 1.0 / NULLIF("Uploaded Count", 0), 2)
                AS creation_multiplier
-    FROM combined_data_2025_3_1_2026_2_28_by_user
+    FROM combined_data2025_3_1_2026_2_28_by_user
     ORDER BY creation_multiplier DESC;
 """
     },
@@ -278,8 +281,8 @@ Example SQL (by user):
     {
         "id": "metric_upload_to_publish_rate",
         "type": "metric",
-        "tables": ["monthly_chart", "client_1_combined_data_2025_3_1_2026_2_28",
-                   "combined_data_2025_3_1_2026_2_28_by_user"],
+        "tables": ["monthly_chart", "client_1_combined_data2025_3_1_2026_2_28",
+                   "combined_data2025_3_1_2026_2_28_by_user"],
         "text": """
 Metric: Upload-to-Publish Rate (End-to-End Pipeline Efficiency)
 Definition:
@@ -299,12 +302,12 @@ CRITICAL — Use correct column names per table:
     monthly_chart:            "Total Published" / "Total Uploaded"
     ALL other summary tables: "Published Count" / "Uploaded Count"
 
-Example SQL (by month):
+Example SQL (by month — chronological order):
     SELECT "Month",
            ROUND("Total Published" * 100.0 / NULLIF("Total Uploaded", 0), 2)
                AS upload_to_publish_rate_pct
     FROM monthly_chart
-    ORDER BY "Month";
+    ORDER BY STRPTIME("Month", '%b, %Y');
 
 Example SQL (by user):
     SELECT "User",
@@ -312,7 +315,7 @@ Example SQL (by user):
            "Published Count",
            ROUND("Published Count" * 100.0 / NULLIF("Uploaded Count", 0), 2)
                AS upload_to_publish_rate_pct
-    FROM combined_data_2025_3_1_2026_2_28_by_user
+    FROM combined_data2025_3_1_2026_2_28_by_user
     ORDER BY upload_to_publish_rate_pct DESC;
 """
     },
@@ -325,12 +328,12 @@ Example SQL (by user):
         "id": "metric_duration_columns",
         "type": "metric",
         "tables": ["month_wise_duration", "channel_wise_publishing_duration",
-                   "client_1_combined_data_2025_3_1_2026_2_28",
-                   "combined_data_2025_3_1_2026_2_28_by_user",
-                   "combined_data_2025_3_1_2026_2_28_by_channel_and_user",
-                   "combined_data_2025_3_1_2026_2_28_by_input_type",
-                   "combined_data_2025_3_1_2026_2_28_by_output_type",
-                   "combined_data_2025_3_1_2026_2_28_by_language"],
+                   "client_1_combined_data2025_3_1_2026_2_28",
+                   "combined_data2025_3_1_2026_2_28_by_user",
+                   "combined_data2025_3_1_2026_2_28_by_channel_and_user",
+                   "combined_data2025_3_1_2026_2_28_by_input_type",
+                   "combined_data2025_3_1_2026_2_28_by_output_type",
+                   "combined_data2025_3_1_2026_2_28_by_language"],
         "text": """
 Duration Columns — Complete Reference by Table:
 
@@ -349,7 +352,7 @@ Column names by table:
         "Total Created Duration_raw"     / "Total Created Duration_secs"
         "Total Published Duration_raw"   / "Total Published Duration_secs"
 
-    client_1_combined_data_2025_3_1_2026_2_28
+    client_1_combined_data2025_3_1_2026_2_28
     combined_data_..._by_user
     combined_data_..._by_channel_and_user
     combined_data_..._by_input_type
@@ -375,34 +378,34 @@ Column names by table:
         "id": "metric_total_duration_uploaded",
         "type": "metric",
         "tables": ["month_wise_duration",
-                   "client_1_combined_data_2025_3_1_2026_2_28",
-                   "combined_data_2025_3_1_2026_2_28_by_user"],
+                   "client_1_combined_data2025_3_1_2026_2_28",
+                   "combined_data2025_3_1_2026_2_28_by_user"],
         "text": """
 Metric: Total Uploaded Duration
 Definition:
     Total runtime of all source videos uploaded to Frammer.
 
 Column names:
-    month_wise_duration:        "Total Uploaded Duration_secs" / "Total Uploaded Duration_raw"
-    combined_data_* tables:     "Uploaded Duration (hh:mm:ss)_secs" / "Uploaded Duration (hh:mm:ss)_raw"
+    month_wise_duration:    "Total Uploaded Duration_secs" / "Total Uploaded Duration_raw"
+    combined_data_* tables: "Uploaded Duration (hh:mm:ss)_secs" / "Uploaded Duration (hh:mm:ss)_raw"
 
 Rules:
     - Use _secs for math and ORDER BY.
     - Use _raw for display in SELECT.
     - To convert to hours: ROUND(col / 3600.0, 2)
 
-Example SQL (uploaded hours by month):
+Example SQL (uploaded hours by month — chronological order):
     SELECT "Month",
            "Total Uploaded Duration_raw",
            ROUND("Total Uploaded Duration_secs" / 3600.0, 2) AS uploaded_hours
     FROM month_wise_duration
-    ORDER BY uploaded_hours DESC;
+    ORDER BY STRPTIME("Month", '%b, %Y');
 
 Example SQL (uploaded hours by user):
     SELECT "User",
            "Uploaded Duration (hh:mm:ss)_raw",
            ROUND("Uploaded Duration (hh:mm:ss)_secs" / 3600.0, 2) AS uploaded_hours
-    FROM combined_data_2025_3_1_2026_2_28_by_user
+    FROM combined_data2025_3_1_2026_2_28_by_user
     ORDER BY uploaded_hours DESC;
 """
     },
@@ -428,7 +431,7 @@ Interpretation:
 
 Always use NULLIF on the denominator.
 
-Example SQL:
+Example SQL (chronological order):
     SELECT "Month",
            "Total Uploaded Duration_raw",
            "Total Created Duration_raw",
@@ -436,7 +439,7 @@ Example SQL:
                / NULLIF("Total Uploaded Duration_secs", 0), 3)
                AS compression_ratio
     FROM month_wise_duration
-    ORDER BY "Month";
+    ORDER BY STRPTIME("Month", '%b, %Y');
 """
     },
 
@@ -457,14 +460,14 @@ Formulas:
 Requires joining month_wise_duration with monthly_chart on "Month".
 This is the ONE allowed join between flat summary tables.
 
-Example SQL (avg created duration per video in minutes by month):
+Example SQL (avg created duration per video in minutes by month — chronological):
     SELECT d."Month",
            ROUND(d."Total Created Duration_secs" * 1.0
                / NULLIF(c."Total Created", 0) / 60.0, 2)
                AS avg_created_duration_mins
     FROM month_wise_duration d
     JOIN monthly_chart c ON d."Month" = c."Month"
-    ORDER BY d."Month";
+    ORDER BY STRPTIME(d."Month", '%b, %Y');
 """
     },
 
@@ -475,8 +478,8 @@ Example SQL (avg created duration per video in minutes by month):
     {
         "id": "metric_top_user",
         "type": "metric",
-        "tables": ["combined_data_2025_3_1_2026_2_28_by_user",
-                   "combined_data_2025_3_1_2026_2_28_by_channel_and_user"],
+        "tables": ["combined_data2025_3_1_2026_2_28_by_user",
+                   "combined_data2025_3_1_2026_2_28_by_channel_and_user"],
         "text": """
 Metric: Top User / User Leaderboard
 Definition:
@@ -496,12 +499,12 @@ Example SQL (full leaderboard by uploads):
            "Published Count",
            ROUND("Published Count" * 100.0 / NULLIF("Created Count", 0), 2)
                AS publish_rate_pct
-    FROM combined_data_2025_3_1_2026_2_28_by_user
+    FROM combined_data2025_3_1_2026_2_28_by_user
     ORDER BY "Uploaded Count" DESC;
 
 Example SQL (top user per channel):
     SELECT "Channel", "User", "Uploaded Count"
-    FROM combined_data_2025_3_1_2026_2_28_by_channel_and_user
+    FROM combined_data2025_3_1_2026_2_28_by_channel_and_user
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY "Channel" ORDER BY "Uploaded Count" DESC
     ) = 1
@@ -513,7 +516,7 @@ Example SQL (top user per channel):
         "id": "metric_top_channel",
         "type": "metric",
         "tables": ["channel_wise_publishing",
-                   "client_1_combined_data_2025_3_1_2026_2_28",
+                   "client_1_combined_data2025_3_1_2026_2_28",
                    "channel_wise_publishing_duration"],
         "text": """
 Metric: Top Channel / Channel Leaderboard
@@ -540,7 +543,7 @@ Example SQL (channels by uploaded count):
            "Uploaded Count",
            "Created Count",
            "Published Count"
-    FROM client_1_combined_data_2025_3_1_2026_2_28
+    FROM client_1_combined_data2025_3_1_2026_2_28
     ORDER BY "Uploaded Count" DESC;
 
 Example SQL (channel with most YouTube published hours):
@@ -585,6 +588,473 @@ Example SQL (month with highest creation multiplier):
                AS creation_multiplier
     FROM monthly_chart
     ORDER BY creation_multiplier DESC
+    LIMIT 1;
+"""
+    },
+
+    # ──────────────────────────────────────────────────────────────────
+    # MONTHLY AGGREGATE METRICS
+    # ──────────────────────────────────────────────────────────────────
+
+    {
+        "id": "metric_monthly_averages",
+        "type": "metric",
+        "tables": ["monthly_chart"],
+        "text": """
+Metric: Monthly Averages (avg_monthly_uploads, avg_monthly_created, avg_monthly_published)
+Definition:
+    Mean value of uploaded, created, or published counts across all months
+    in the analysis period. Gives a baseline for typical monthly activity.
+
+Formulas:
+    avg_monthly_uploads   = AVG("Total Uploaded")
+    avg_monthly_created   = AVG("Total Created")
+    avg_monthly_published = AVG("Total Published")
+
+Example SQL (all three averages together):
+    SELECT
+        ROUND(AVG("Total Uploaded"),  2) AS avg_monthly_uploads,
+        ROUND(AVG("Total Created"),   2) AS avg_monthly_created,
+        ROUND(AVG("Total Published"), 2) AS avg_monthly_published
+    FROM monthly_chart;
+
+Example SQL (avg monthly uploads only):
+    SELECT ROUND(AVG("Total Uploaded"), 2) AS avg_monthly_uploads
+    FROM monthly_chart;
+"""
+    },
+
+    {
+        "id": "metric_peak_workload",
+        "type": "metric",
+        "tables": ["monthly_chart"],
+        "text": """
+Metric: Peak Workload (peak_workload_month, peak_workload_clips, peak_slice_ratio)
+Definition:
+    Identifies the single busiest month for AI generation (Created count),
+    and measures how efficiently Frammer multiplied content that month.
+
+Formulas:
+    peak_workload_month  = argmax("Total Created")   → month name string
+    peak_workload_clips  = MAX("Total Created")       → integer count
+    peak_slice_ratio     = "Total Created" / "Total Uploaded" in that month → float
+
+Example SQL (all three together):
+    WITH ranked AS (
+        SELECT "Month",
+               "Total Created",
+               "Total Uploaded",
+               ROUND("Total Created" * 1.0 / NULLIF("Total Uploaded", 0), 2)
+                   AS peak_slice_ratio
+        FROM monthly_chart
+        ORDER BY "Total Created" DESC
+        LIMIT 1
+    )
+    SELECT
+        "Month"           AS peak_workload_month,
+        "Total Created"   AS peak_workload_clips,
+        peak_slice_ratio
+    FROM ranked;
+
+Example SQL (peak workload month only):
+    SELECT "Month" AS peak_workload_month
+    FROM monthly_chart
+    ORDER BY "Total Created" DESC
+    LIMIT 1;
+"""
+    },
+
+    {
+        "id": "metric_peak_value",
+        "type": "metric",
+        "tables": ["monthly_chart"],
+        "text": """
+Metric: Peak Value (peak_value_month, peak_value_pub_count)
+Definition:
+    Identifies the single month with the highest number of published clips.
+    "Value" = editorial output actually delivered to external platforms.
+
+Formulas:
+    peak_value_month     = argmax("Total Published")  → month name string
+    peak_value_pub_count = MAX("Total Published")     → integer count
+
+Example SQL:
+    SELECT
+        "Month"            AS peak_value_month,
+        "Total Published"  AS peak_value_pub_count
+    FROM monthly_chart
+    ORDER BY "Total Published" DESC
+    LIMIT 1;
+"""
+    },
+
+    {
+        "id": "metric_dec_to_feb_upload_surge",
+        "type": "metric",
+        "tables": ["monthly_chart"],
+        "text": """
+Metric: Dec-to-Feb Upload Surge (dec_to_feb_upload_surge_pct)
+Definition:
+    Percentage growth in upload volume from December 2025 to February 2026.
+    Tracks seasonal or structural ramp-up at the start of the new year.
+
+Formula:
+    dec_to_feb_upload_surge_pct =
+        (feb_uploads - dec_uploads) / dec_uploads * 100
+
+Month label format in this table: 'Mon, YYYY' — e.g. 'Dec, 2025', 'Feb, 2026'.
+
+Example SQL:
+    WITH months AS (
+        SELECT
+            MAX(CASE WHEN "Month" = 'Dec, 2025' THEN "Total Uploaded" END) AS dec_uploads,
+            MAX(CASE WHEN "Month" = 'Feb, 2026' THEN "Total Uploaded" END) AS feb_uploads
+        FROM monthly_chart
+    )
+    SELECT
+        ROUND(
+            (feb_uploads - dec_uploads) * 100.0 / NULLIF(dec_uploads, 0),
+        2) AS dec_to_feb_upload_surge_pct
+    FROM months;
+"""
+    },
+
+
+    # ──────────────────────────────────────────────────────────────────
+    # CHANNEL EFFICIENCY METRICS
+    # ──────────────────────────────────────────────────────────────────
+
+    {
+        "id": "metric_best_channel",
+        "type": "metric",
+        "tables": ["client_1_combined_data2025_3_1_2026_2_28"],
+        "text": """
+Metric: Best Channel (best_channel_name, best_channel_publish_rate)
+Definition:
+    The channel with the highest publish rate (Published / Created * 100).
+    Identifies which channel's editorial team is most selective and efficient.
+
+Formulas:
+    best_channel_name         = argmax("Published Count" / "Created Count")
+    best_channel_publish_rate = max("Published Count" * 100.0 / "Created Count")
+
+Always use NULLIF("Created Count", 0) to avoid division by zero.
+
+Example SQL (both together):
+    SELECT
+        "Channel"                                                        AS best_channel_name,
+        ROUND("Published Count" * 100.0 / NULLIF("Created Count", 0), 2) AS best_channel_publish_rate
+    FROM client_1_combined_data2025_3_1_2026_2_28
+    ORDER BY best_channel_publish_rate DESC
+    LIMIT 1;
+
+Example SQL (full leaderboard):
+    SELECT
+        "Channel",
+        "Uploaded Count",
+        "Created Count",
+        "Published Count",
+        ROUND("Published Count" * 100.0 / NULLIF("Created Count", 0), 2) AS publish_rate_pct
+    FROM client_1_combined_data2025_3_1_2026_2_28
+    ORDER BY publish_rate_pct DESC;
+"""
+    },
+
+    {
+        "id": "metric_channel_a_contribution",
+        "type": "metric",
+        "tables": ["client_1_combined_data2025_3_1_2026_2_28"],
+        "text": """
+Metric: Channel A Contribution (ch_a_contribution_pct)
+Definition:
+    Channel A's share of all published clips across the entire platform.
+    Measures how dominant a single channel is in the publishing pipeline.
+
+Formula:
+    ch_a_contribution_pct =
+        (Channel A "Published Count" / SUM of all "Published Count") * 100
+
+Example SQL:
+    SELECT
+        ROUND(
+            MAX(CASE WHEN "Channel" = 'A' THEN "Published Count" END)
+            * 100.0 / NULLIF(SUM("Published Count"), 0),
+        2) AS ch_a_contribution_pct
+    FROM client_1_combined_data2025_3_1_2026_2_28;
+"""
+    },
+
+    {
+        "id": "metric_active_dead_channel_ratio",
+        "type": "metric",
+        "tables": ["client_1_combined_data2025_3_1_2026_2_28"],
+        "text": """
+Metric: Active Channel Ratio & Dead Channel Pct
+    (active_channel_ratio, dead_channel_pct)
+Definition:
+    active_channel_ratio = % of channels that have published at least 1 clip.
+    dead_channel_pct     = % of channels that published 0 clips despite generating content.
+
+Formulas:
+    active_channel_ratio = (COUNT channels WHERE "Published Count" >= 1)
+                           / COUNT(*) * 100
+    dead_channel_pct     = (COUNT channels WHERE "Published Count" = 0)
+                           / COUNT(*) * 100
+
+Note: active_channel_ratio + dead_channel_pct = 100%.
+
+Example SQL (both together):
+    SELECT
+        ROUND(COUNT(*) FILTER (WHERE "Published Count" >= 1) * 100.0
+              / NULLIF(COUNT(*), 0), 2) AS active_channel_ratio,
+        ROUND(COUNT(*) FILTER (WHERE "Published Count" = 0)  * 100.0
+              / NULLIF(COUNT(*), 0), 2) AS dead_channel_pct
+    FROM client_1_combined_data2025_3_1_2026_2_28;
+"""
+    },
+
+    {
+        "id": "metric_youtube_workload",
+        "type": "metric",
+        "tables": ["channel_wise_publishing_duration", "channel_wise_publishing"],
+        "text": """
+Metric: YouTube Workload (youtube_workload_secs)
+Definition:
+    Total seconds of content published to YouTube across all channels.
+    Measures the platform's YouTube-specific output volume.
+
+Formula:
+    youtube_workload_secs = SUM("Youtube Duration_secs")
+
+Table: channel_wise_publishing_duration
+Column: "Youtube Duration_secs"  (BIGINT — already in seconds)
+
+To convert to hours: ROUND(youtube_workload_secs / 3600.0, 2)
+
+Example SQL (total YouTube published duration in seconds):
+    SELECT SUM("Youtube Duration_secs") AS youtube_workload_secs
+    FROM channel_wise_publishing_duration;
+
+Example SQL (YouTube duration in hours, by channel):
+    SELECT
+        "Channel",
+        "Youtube Duration_raw",
+        ROUND("Youtube Duration_secs" / 3600.0, 2) AS youtube_hours
+    FROM channel_wise_publishing_duration
+    WHERE "Youtube Duration_secs" > 0
+    ORDER BY "Youtube Duration_secs" DESC;
+
+For YouTube published COUNT (not duration), use channel_wise_publishing:
+    SELECT SUM("Youtube") AS youtube_total_published
+    FROM channel_wise_publishing;
+"""
+    },
+
+
+    # ──────────────────────────────────────────────────────────────────
+    # USER EFFICIENCY METRICS
+    # ──────────────────────────────────────────────────────────────────
+
+    {
+        "id": "metric_user_efficiency",
+        "type": "metric",
+        "tables": ["combined_data2025_3_1_2026_2_28_by_user"],
+        "text": """
+Metric: User Efficiency
+    (top_volume_user, best_efficiency_user, best_efficiency_pub_rate, zero_value_users)
+Definition:
+    Identifies standout users by upload volume and publish efficiency,
+    excluding QA/test accounts from all calculations.
+
+QA/test users to ALWAYS exclude:
+    "User" NOT LIKE 'QA-%'
+    AND "User" NOT IN ('Test User', 'Auto Upload', 'deleteme@frammer.com')
+
+Formulas:
+    top_volume_user        = argmax("Uploaded Count") excluding QA
+    best_efficiency_user   = argmax("Published Count" / "Created Count")
+                             excluding QA, requiring "Published Count" >= 1
+    best_efficiency_pub_rate = max("Published Count" * 100.0 / "Created Count")
+                               excluding QA, requiring "Published Count" >= 1
+    zero_value_users       = COUNT of non-QA users WHERE "Published Count" = 0
+
+Example SQL (all four together):
+    WITH real_users AS (
+        SELECT *
+        FROM combined_data2025_3_1_2026_2_28_by_user
+        WHERE "User" NOT LIKE 'QA-%'
+          AND "User" NOT IN ('Test User', 'Auto Upload', 'deleteme@frammer.com')
+    )
+    SELECT
+        (SELECT "User" FROM real_users
+         ORDER BY "Uploaded Count" DESC LIMIT 1)                           AS top_volume_user,
+
+        (SELECT "User" FROM real_users
+         WHERE "Published Count" >= 1
+         ORDER BY "Published Count" * 100.0 / NULLIF("Created Count", 0) DESC
+         LIMIT 1)                                                           AS best_efficiency_user,
+
+        (SELECT ROUND(MAX("Published Count" * 100.0 / NULLIF("Created Count", 0)), 2)
+         FROM real_users WHERE "Published Count" >= 1)                     AS best_efficiency_pub_rate,
+
+        (SELECT COUNT(*) FROM real_users WHERE "Published Count" = 0)      AS zero_value_users;
+
+Example SQL (zero-value users list):
+    SELECT "User", "Uploaded Count", "Created Count"
+    FROM combined_data2025_3_1_2026_2_28_by_user
+    WHERE "Published Count" = 0
+      AND "User" NOT LIKE 'QA-%'
+      AND "User" NOT IN ('Test User', 'Auto Upload', 'deleteme@frammer.com')
+    ORDER BY "Created Count" DESC;
+"""
+    },
+
+
+    # ──────────────────────────────────────────────────────────────────
+    # LANGUAGE EFFICIENCY METRICS
+    # ──────────────────────────────────────────────────────────────────
+
+    {
+        "id": "metric_language_efficiency",
+        "type": "metric",
+        "tables": ["combined_data2025_3_1_2026_2_28_by_language"],
+        "text": """
+Metric: Language Efficiency
+    (en_publish_rate, hi_publish_rate, en_hi_efficacy_multiplier,
+     en_gen_cost, hi_gen_cost)
+Definition:
+    Compares English vs Hindi content pipelines on publish rate and
+    generation cost — how many AI clips are needed to produce one publish.
+
+Formulas:
+    en_publish_rate           = (en_published / en_created) * 100
+    hi_publish_rate           = (hi_published / hi_created) * 100
+    en_hi_efficacy_multiplier = en_publish_rate / hi_publish_rate
+        → How many times more effective English pipeline is vs Hindi.
+    en_gen_cost               = en_created / en_published
+        → AI clips consumed per published clip (English).
+    hi_gen_cost               = hi_created / hi_published
+        → AI clips consumed per published clip (Hindi).
+
+Table: combined_data2025_3_1_2026_2_28_by_language
+Language values: 'en', 'hi', 'mix', 'es', 'ar', 'mr'
+Columns: "Language", "Uploaded Count", "Created Count", "Published Count"
+
+Example SQL (all five metrics together):
+    WITH lang AS (
+        SELECT
+            MAX(CASE WHEN "Language" = 'en' THEN "Published Count" END) AS en_pub,
+            MAX(CASE WHEN "Language" = 'en' THEN "Created Count"   END) AS en_cre,
+            MAX(CASE WHEN "Language" = 'hi' THEN "Published Count" END) AS hi_pub,
+            MAX(CASE WHEN "Language" = 'hi' THEN "Created Count"   END) AS hi_cre
+        FROM combined_data2025_3_1_2026_2_28_by_language
+    )
+    SELECT
+        ROUND(en_pub * 100.0 / NULLIF(en_cre, 0), 2)   AS en_publish_rate,
+        ROUND(hi_pub * 100.0 / NULLIF(hi_cre, 0), 2)   AS hi_publish_rate,
+        ROUND(
+            (en_pub * 100.0 / NULLIF(en_cre, 0)) /
+            NULLIF(hi_pub * 100.0 / NULLIF(hi_cre, 0), 0),
+        2)                                               AS en_hi_efficacy_multiplier,
+        ROUND(en_cre * 1.0 / NULLIF(en_pub, 0), 2)     AS en_gen_cost,
+        ROUND(hi_cre * 1.0 / NULLIF(hi_pub, 0), 2)     AS hi_gen_cost
+    FROM lang;
+
+Example SQL (publish rate by all languages):
+    SELECT
+        "Language",
+        "Created Count",
+        "Published Count",
+        ROUND("Published Count" * 100.0 / NULLIF("Created Count", 0), 2) AS publish_rate_pct
+    FROM combined_data2025_3_1_2026_2_28_by_language
+    ORDER BY publish_rate_pct DESC;
+"""
+    },
+
+
+    # ──────────────────────────────────────────────────────────────────
+    # DATA QUALITY METRICS
+    # ──────────────────────────────────────────────────────────────────
+
+    {
+        "id": "metric_unknown_team_attribution",
+        "type": "metric",
+        "tables": ["video_list"],
+        "text": """
+Metric: Unknown Team Attribution (unknown_team_attribution_pct)
+Definition:
+    Percentage of video records where team_name = 'Unknown' or NULL.
+    Measures data completeness. A HIGH percentage is EXPECTED and VALID —
+    it tells us how much of the data lacks team attribution.
+
+CRITICAL — Do NOT say "data unavailable" just because most values are 'Unknown'.
+    'Unknown' IS the data. Counting it IS the metric. Always execute the SQL.
+
+Formula:
+    unknown_team_attribution_pct =
+        COUNT(*) WHERE (team_name = 'Unknown' OR team_name IS NULL)
+        / COUNT(*) * 100
+
+Table: video_list
+Column: team_name  (VARCHAR)
+Expected result: a high percentage (likely > 90%) — this is correct and meaningful.
+
+Example SQL:
+    SELECT
+        COUNT(*)                                                          AS total_records,
+        COUNT(*) FILTER (WHERE team_name = 'Unknown' OR team_name IS NULL)
+                                                                          AS unattributed,
+        ROUND(
+            COUNT(*) FILTER (WHERE team_name = 'Unknown' OR team_name IS NULL)
+            * 100.0 / NULLIF(COUNT(*), 0),
+        2)                                                                AS unknown_team_attribution_pct
+    FROM video_list;
+"""
+    },
+
+    {
+        "id": "metric_user_classification",
+        "type": "metric",
+        "tables": ["combined_data2025_3_1_2026_2_28_by_user",
+                   "combined_data2025_3_1_2026_2_28_by_channel_and_user"],
+        "text": """
+User Classification — QA Users vs Real Users
+
+CRITICAL: The dataset contains two classes of users. Always apply the correct
+filter when a question mentions "real users", "actual users", "non-QA",
+"excluding QA", or "excluding test accounts".
+
+QA / Test accounts (EXCLUDE for real-user analysis):
+    "User" LIKE 'QA-%'               -- QA-Purushottam, QA-Bhargavi, QA-Ankith, etc.
+    "User" = 'Test User'
+    "User" = 'Auto Upload'
+    "User" = 'deleteme@frammer.com'
+
+Real / Production users (all others):
+    "User" NOT LIKE 'QA-%'
+    AND "User" NOT IN ('Test User', 'Auto Upload', 'deleteme@frammer.com')
+
+Standard filter block to use in every real-user query:
+    WHERE "User" NOT LIKE 'QA-%'
+      AND "User" NOT IN ('Test User', 'Auto Upload', 'deleteme@frammer.com')
+
+Example SQL (top uploader among real users only):
+    SELECT "User", "Uploaded Count"
+    FROM combined_data2025_3_1_2026_2_28_by_user
+    WHERE "User" NOT LIKE 'QA-%'
+      AND "User" NOT IN ('Test User', 'Auto Upload', 'deleteme@frammer.com')
+    ORDER BY "Uploaded Count" DESC
+    LIMIT 1;
+
+Example SQL (most efficient real user with >= 1 publish):
+    SELECT "User",
+           ROUND("Published Count" * 100.0 / NULLIF("Created Count", 0), 2)
+               AS publish_rate_pct
+    FROM combined_data2025_3_1_2026_2_28_by_user
+    WHERE "Published Count" >= 1
+      AND "User" NOT LIKE 'QA-%'
+      AND "User" NOT IN ('Test User', 'Auto Upload', 'deleteme@frammer.com')
+    ORDER BY publish_rate_pct DESC
     LIMIT 1;
 """
     },

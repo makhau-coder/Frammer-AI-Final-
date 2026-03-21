@@ -1,26 +1,25 @@
 """
-api/routes/chat.py — NLP query endpoint
+api/routes/chat.py — NLP query endpoints
 
-POST /api/chat              → natural language question through NLP pipeline
+POST /api/chat              → natural language question (JSON response)
+GET  /api/chat/stream       → same pipeline, SSE streaming (for Chatbot.jsx)
 GET  /api/chat/chart/{id}   → serve the generated PNG chart
 
-The NLP module is at backend/nlp_frammer/nlp/ — your friend's code, unchanged
-except for the bugs fixed in this session (table names, chart dir, agent path).
-
-This file handles:
-  - sys.path so NLP imports resolve from nlp_frammer/
-  - FRAMMER_DB_PATH override (Windows dev path → our DuckDB) before ANY import
-  - FRAMMER_CHART_DIR set to backend/data/charts/ so charts persist and are serveable
-  - Clean JSON response covering all NLPResult fields including new agent fields
-  - PNG chart serving from backend/data/charts/
+FIXES applied:
+  1. Import path: 'from nlp.engine import ...' (sys.path already has nlp_frammer/)
+  2. Unique thread_id per request — prevents LangGraph conversation history
+     from one user polluting the next user's queries.
+  3. Added GET /api/chat/stream SSE endpoint for Chatbot.jsx EventSource.
 """
 
 import os
 import sys
+import json
+import uuid
 import logging
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -31,23 +30,22 @@ if _NLP_ROOT not in sys.path:
     sys.path.insert(0, _NLP_ROOT)
 
 # ── Set env vars BEFORE importing any NLP modules ─────────────────────────────
-# 1. FRAMMER_DB_PATH — executor.py reads this lazily but we set it early too
-#    to handle any module-level reads.
+# These must be set before any nlp.* import so executor.py and
+# chart_generator.py pick them up via their lazy resolver functions.
 from config import DATABASE_PATH as _OUR_DB
 os.environ["FRAMMER_DB_PATH"] = _OUR_DB
 
-# 2. FRAMMER_CHART_DIR — chart_generator.py reads this at module load.
-#    Set to backend/data/charts/ so charts persist across restarts and
-#    can be served by this file's GET endpoint.
 _CHART_DIR = os.path.join(_BACKEND_ROOT, "data", "charts")
 os.makedirs(_CHART_DIR, exist_ok=True)
 os.environ["FRAMMER_CHART_DIR"] = _CHART_DIR
 
 # ── Now safe to import NLP ────────────────────────────────────────────────────
-from nlp_frammer.nlp.engine import query, NLPResult
+# sys.path already has _NLP_ROOT = .../backend/nlp_frammer/
+# so 'nlp.engine' resolves to nlp_frammer/nlp/engine.py  ✓
+from nlp.engine import query, NLPResult
 
-router    = APIRouter(prefix="/api", tags=["chat"])
-logger    = logging.getLogger(__name__)
+router = APIRouter(prefix="/api", tags=["chat"])
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -55,7 +53,8 @@ logger    = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
-    question: str
+    question:   str
+    session_id: str | None = None   # Optional: caller can supply a stable session ID
 
 
 class ChatResponse(BaseModel):
@@ -69,15 +68,14 @@ class ChatResponse(BaseModel):
     row_count:       int
 
     # Agent outputs
-    insight:         str | None   # Gemini natural language synthesis
-    message:         str | None   # Final user-facing message from agent
-                                  #   (clarification question or cannot_answer text)
-    needs_input:     bool         # True = agent is asking a follow-up question
-    cannot_answer:   bool         # True = question is out of scope
+    insight:         str | None
+    message:         str | None
+    needs_input:     bool
+    cannot_answer:   bool
 
     # Chart
-    chart_url:       str | None   # e.g. /api/chat/chart/<id>.png
-    chart_type:      str | None   # "line", "bar", "heatmap", "dual_axis"
+    chart_url:       str | None
+    chart_type:      str | None
 
     # Debug / metadata
     error:           str | None
@@ -85,42 +83,38 @@ class ChatResponse(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# POST /api/chat
+# POST /api/chat  — JSON response
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     """
-    Full NLP pipeline:
-      1. ChromaDB retrieval  — schema + metric + few-shot examples
-      2. LangGraph agent     — Gemini SQL generation with entity resolution,
-                               DuckDB execution, empty-result handling
-      3. Gemini synthesis    — natural language insight from result rows
-      4. Chart generation    — Plotly PNG saved to backend/data/charts/
+    Full NLP pipeline returning a single JSON response.
 
-    If the agent needs clarification (e.g. ambiguous user name):
-      → success=False, needs_input=True, message="Did you mean X or Y?"
+    Each request gets its own LangGraph thread_id so user sessions
+    are isolated — no history leaking between separate requests.
 
-    If the question is out of scope:
-      → success=False, cannot_answer=True, message="<reason> | <suggestion>"
+    Optionally pass session_id in the request body to preserve
+    multi-turn context within the same conversation session.
     """
     question = req.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
-    logger.info(f"[chat] {question!r}")
+    # FIX: Use a unique thread_id per request (or per session if provided).
+    # The old code used a single global CONFIG with thread_id="main" which
+    # caused conversation history from one user to pollute the next user's query.
+    thread_id = req.session_id or str(uuid.uuid4())
+
+    logger.info(f"[chat] POST {question!r} (thread={thread_id})")
 
     try:
-        result: NLPResult = query(question)
+        result: NLPResult = query(question, thread_id=thread_id)
     except Exception as e:
         logger.error(f"[chat] Pipeline crashed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"NLP error: {e}")
 
-    # Build chart URL — served from backend/data/charts/ via GET /api/chat/chart/<id>
-    chart_url = None
-    if result.chart_path and os.path.exists(result.chart_path):
-        chart_url = f"/api/chat/chart/{os.path.basename(result.chart_path)}"
-        logger.info(f"[chat] Chart: {result.chart_type} → {chart_url}")
+    chart_url = _build_chart_url(result.chart_path)
 
     return ChatResponse(
         success          = result.success,
@@ -129,8 +123,8 @@ def chat(req: ChatRequest):
         data             = result.data,
         row_count        = result.row_count,
         insight          = result.insight,
-        message          = result.message,          # agent clarification / cannot_answer text
-        needs_input      = result.needs_input,      # True = agent asked a question
+        message          = result.message,
+        needs_input      = result.needs_input,
         cannot_answer    = result.cannot_answer,
         chart_url        = chart_url,
         chart_type       = result.chart_type,
@@ -140,7 +134,83 @@ def chat(req: ChatRequest):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GET /api/chat/chart/{chart_id}
+# GET /api/chat/stream  — SSE streaming (consumed by Chatbot.jsx EventSource)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/chat/stream")
+def chat_stream(question: str, session_id: str | None = None):
+    """
+    SSE streaming endpoint for Chatbot.jsx.
+
+    EventSource (GET) emits events in order:
+      sql_ready      { sql }
+      data_ready     { rows, row_count }
+      insight_ready  { insight }
+      chart_ready    { chart_url, chart_type }   (only if chart generated)
+      error          { message }                  (on failure/cannot_answer)
+      done           {}
+    """
+    question = question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+
+    thread_id = session_id or str(uuid.uuid4())
+    logger.info(f"[chat] SSE {question!r} (thread={thread_id})")
+
+    def _generate():
+        try:
+            result: NLPResult = query(question, thread_id=thread_id)
+        except Exception as e:
+            logger.error(f"[chat/stream] Pipeline crashed: {e}", exc_info=True)
+            yield _sse("error", {"message": f"Internal error: {e}"})
+            yield _sse("done", {})
+            return
+
+        if result.cannot_answer or result.needs_input:
+            yield _sse("error", {
+                "message": result.message or result.error or "Cannot answer this question."
+            })
+            yield _sse("done", {})
+            return
+
+        if not result.success and result.error:
+            yield _sse("error", {"message": result.error})
+            yield _sse("done", {})
+            return
+
+        if result.sql:
+            yield _sse("sql_ready", {"sql": result.sql})
+
+        if result.data:
+            yield _sse("data_ready", {"rows": result.data, "row_count": result.row_count})
+
+        if result.insight:
+            yield _sse("insight_ready", {"insight": result.insight})
+
+        chart_url = _build_chart_url(result.chart_path)
+        if chart_url and result.chart_type:
+            yield _sse("chart_ready", {"chart_url": chart_url, "chart_type": result.chart_type})
+
+        if result.success and result.row_count == 0 and not result.insight:
+            yield _sse("insight_ready", {
+                "insight": result.message or "No results found for your query."
+            })
+
+        yield _sse("done", {})
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":               "no-cache",
+            "X-Accel-Buffering":           "no",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /api/chat/chart/{chart_id}  — serve PNG chart
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/chat/chart/{chart_id}")
@@ -150,7 +220,6 @@ def get_chart(chart_id: str):
     chart_id = filename e.g. "3f2a1b4c.png"
     Charts are stored in backend/data/charts/ (set via FRAMMER_CHART_DIR).
     """
-    # Sanitise — prevent path traversal
     if ".." in chart_id or "/" in chart_id or "\\" in chart_id:
         raise HTTPException(status_code=400, detail="Invalid chart ID.")
 
@@ -159,7 +228,7 @@ def get_chart(chart_id: str):
     if not os.path.exists(path):
         raise HTTPException(
             status_code=404,
-            detail=f"Chart '{chart_id}' not found. It may not have been generated yet."
+            detail=f"Chart '{chart_id}' not found.",
         )
 
     return FileResponse(
@@ -167,3 +236,17 @@ def get_chart(chart_id: str):
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=3600"},
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_chart_url(chart_path: str | None) -> str | None:
+    if chart_path and os.path.exists(chart_path):
+        return f"/api/chat/chart/{os.path.basename(chart_path)}"
+    return None
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"

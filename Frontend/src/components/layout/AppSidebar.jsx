@@ -10,13 +10,13 @@ import {
 } from "@/components/ui/sidebar";
 
 const items = [
-  { title: "Executive Overview", url: "/",             icon: LayoutDashboard },
-  { title: "Usage & Trends",     url: "/usage",        icon: TrendingUp },
-  { title: "Client Analysis",    url: "/clients",      icon: Users },
-  { title: "Multi-Dimensional",  url: "/multi",        icon: Layers },
-  { title: "Video Explorer",     url: "/explorer",     icon: Table2 },
-  { title: "AI Chat",            url: "/chat",         icon: MessageSquare },
-  { title: "Data Quality",       url: "/data-quality", icon: ShieldCheck },
+  { title: "Executive Overview", url: "/", icon: LayoutDashboard },
+  { title: "Usage & Trends", url: "/usage", icon: TrendingUp },
+  { title: "Client Analysis", url: "/clients", icon: Users },
+  { title: "Multi-Dimensional", url: "/multi", icon: Layers },
+  { title: "Video Explorer", url: "/explorer", icon: Table2 },
+  { title: "AI Chat", url: "/chat", icon: MessageSquare },
+  { title: "Data Quality", url: "/data-quality", icon: ShieldCheck },
 ];
 
 export function AppSidebar() {

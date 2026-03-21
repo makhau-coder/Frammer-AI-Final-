@@ -100,11 +100,21 @@ def _load_path(path: str) -> pd.DataFrame:
 
 
 def _missing(series: pd.Series) -> int:
-    """Count null + nullish-string values."""
-    return int(
-        series.isna().sum() +
-        series.fillna("").astype(str).str.strip().isin(_NULLISH).sum()
-    )
+    """Count null + nullish-string values (each row counted at most once).
+
+    FIX: The old implementation double-counted NaN rows — isna() returned True
+    for NaN, and fillna("").isin(_NULLISH) also returned True for NaN (because
+    fillna("") produces "" which is in _NULLISH). This caused impossible
+    percentages like 199.6% for published_platform and published_url.
+
+    Correct approach: a row is missing if it is NaN OR it is a non-null nullish
+    string. These are mutually exclusive by definition, so count them separately
+    and add — but explicitly exclude NaN rows from the string check.
+    """
+    is_null    = series.isna()
+    # Only check non-null values for nullish strings (avoids double-count)
+    is_nullish = (~is_null) & series.astype(str).str.strip().isin(_NULLISH)
+    return int(is_null.sum() + is_nullish.sum())
 
 
 def _pct(n: int, total: int) -> float:
@@ -476,14 +486,22 @@ def check_video_list(results: list):
        f"{n:,} video records", n, table=tbl)
 
     # Per-field missing — severity varies by field importance
+    # Count published videos for context-aware messages on platform/URL fields
+    pub_col_for_count = "is_published" if "is_published" in df.columns else "Published"
+    total_published = 0
+    if pub_col_for_count in df.columns:
+        total_published = int(
+            df[pub_col_for_count].astype(str).str.lower().isin(["yes", "true", "1"]).sum()
+        )
+
     field_checks = [
         ("video_id",           "Video ID",           FAIL),   # identity
         ("uploaded_by",        "Uploaded By",         FAIL),   # identity
         ("headline",           "Headline",            WARN),   # 8.5% known
         ("team_name",          "Team Name",           FAIL),   # 99.3% missing — critical
         ("input_type",         "Type",                WARN),   # 0.1% missing
-        ("published_platform", "Published Platform",  WARN),   # high missing but expected
-        ("published_url",      "Published URL",       WARN),
+        ("published_platform", "Published Platform",  WARN),   # expected null for unpublished
+        ("published_url",      "Published URL",       WARN),   # expected null for unpublished
     ]
     for std_col, orig_col, sev in field_checks:
         col = std_col if std_col in df.columns else orig_col
@@ -492,10 +510,37 @@ def check_video_list(results: list):
         miss = _missing(df[col])
         p    = _pct(miss, n)
         status = FAIL if (miss > 0 and sev == FAIL) else WARN if miss > 0 else PASS
-        _r(results, f"missing:{tbl}.{std_col}",
-           status,
-           f"{miss:,}/{n:,} missing or unknown ({p}%)" if miss else "No missing values",
-           miss, p, field=std_col, table=tbl)
+
+        # For platform/URL fields, the denominator should be total_published rows
+        # (unpublished videos are EXPECTED to have no platform/URL)
+        if std_col in ("published_platform", "published_url") and total_published > 0:
+            # Null for unpublished rows is expected — only flag truly missing published rows
+            pub_col_tmp = pub_col_for_count
+            pub_mask_tmp = df[pub_col_tmp].astype(str).str.lower().isin(["yes", "true", "1"])
+            miss_pub = int(
+                (pub_mask_tmp & df[col].fillna("").astype(str).str.strip().isin(
+                    _NULLISH | {""}
+                )).sum()
+            )
+            # Recalculate: only published rows without platform/URL are a real problem
+            unpublished_null = miss - miss_pub
+            p_pub = _pct(miss_pub, total_published)
+            p_total = _pct(miss, n)
+            msg = (
+                f"{miss_pub}/{total_published} published videos missing {std_col.replace('_', ' ')} "
+                f"({p_pub}%) — {unpublished_null:,} unpublished rows have null as expected"
+                if miss_pub else
+                f"All {total_published} published videos have {std_col.replace('_', ' ')}. "
+                f"{unpublished_null:,} unpublished rows are null as expected."
+            )
+            status = WARN if miss_pub > 0 else PASS
+            _r(results, f"missing:{tbl}.{std_col}", status, msg,
+               miss_pub, p_pub, field=std_col, table=tbl)
+        else:
+            _r(results, f"missing:{tbl}.{std_col}",
+               status,
+               f"{miss:,}/{n:,} missing or unknown ({p}%)" if miss else "No missing values",
+               miss, p, field=std_col, table=tbl)
 
     # Duplicate Video IDs
     vid_col = "video_id" if "video_id" in df.columns else "Video ID"

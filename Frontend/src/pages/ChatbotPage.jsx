@@ -18,7 +18,7 @@ import {
   Send, Loader2, Bot, User, AlertTriangle, XCircle,
   ChevronDown, ChevronUp, Database, Sparkles, Copy,
   Check, BarChart2, Table2, Code2, Lightbulb,
-  HelpCircle, ArrowRight,
+  HelpCircle, ArrowRight, RotateCcw, MessageSquarePlus,
 } from "lucide-react";
 
 const API = "http://localhost:8000";
@@ -35,11 +35,21 @@ const STARTERS = [
 ];
 
 export default function ChatbotPage() {
-  const [messages, setMessages] = useState([]);
-  const [input,    setInput]    = useState("");
-  const [loading,  setLoading]  = useState(false);
+  const [messages,   setMessages]  = useState([]);
+  const [input,      setInput]     = useState("");
+  const [loading,    setLoading]   = useState(false);
+  const [sessionId,  setSessionId] = useState(() => crypto.randomUUID());
   const bottomRef  = useRef(null);
   const inputRef   = useRef(null);
+
+  // Start a completely fresh conversation with a new session ID
+  const newChat = () => {
+    if (loading) return;
+    setMessages([]);
+    setInput("");
+    setSessionId(crypto.randomUUID());
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -64,7 +74,7 @@ export default function ChatbotPage() {
     const res = await fetch(`${API}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: q }),
+      body: JSON.stringify({ question: q, session_id: sessionId }),
     });
 
     const data = await res.json(); // ✅ only once
@@ -96,6 +106,21 @@ export default function ChatbotPage() {
   return (
     <DashboardLayout title="AI Analytics Chat">
       <div className="flex flex-col h-[calc(100vh-7rem)]">
+
+        {/* ── Toolbar ───────────────────────────────────────────────── */}
+        {messages.length > 0 && (
+          <div className="flex justify-end mb-3 shrink-0">
+            <button
+              onClick={newChat}
+              disabled={loading}
+              title="Start a new conversation"
+              className="flex items-center gap-2 rounded-xl border border-border/60 bg-card/60 px-4 py-2 text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 hover:bg-primary/5 transition-all disabled:opacity-40"
+            >
+              <MessageSquarePlus className="h-3.5 w-3.5" />
+              New Chat
+            </button>
+          </div>
+        )}
 
         {/* ── Feed ──────────────────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto space-y-5 pb-4 pr-1">

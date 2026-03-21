@@ -14,7 +14,7 @@ from nlp.vector_store import get_collection
 # How many chunks to retrieve per type.
 # Tuned to stay well under ~1000 tokens of retrieved context.
 TOP_K_TABLES    = 4   # table + relationship + limitation chunks
-TOP_K_METRICS   = 2   # metric definition chunks
+TOP_K_METRICS   = 3   # metric definition chunks
 TOP_K_EXAMPLES  = 3   # few-shot Q→SQL example chunks
 
 # Minimum similarity score to include a chunk (0.0 – 1.0, cosine).

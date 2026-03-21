@@ -2,20 +2,31 @@
 #
 # Automatically generates an appropriate EDA chart from NLP query results.
 # Called after DuckDB execution — inspects data shape and routes to the
-# right Plotly chart type. Saves PNG to /tmp and returns the path.
+# right Plotly chart type. Saves PNG and returns the path.
+#
+# FIX (CRITICAL): CHART_DIR is now resolved lazily at call time via
+# _get_chart_dir(), not frozen at module load as a hardcoded "/tmp" path.
+#
+# OLD (broken):
+#   CHART_DIR = "/tmp/frammer_charts"   ← /tmp does not exist on Windows
+#   os.makedirs(CHART_DIR, ...)         ← crashes on Windows at import
+#
+# NEW (fixed):
+#   _get_chart_dir() reads FRAMMER_CHART_DIR env var at call time.
+#   Falls back to tempfile.gettempdir() which is cross-platform.
+#   chat.py sets FRAMMER_CHART_DIR=backend/data/charts/ before importing
+#   the NLP layer, so that value is always picked up correctly.
 
 import os
 import uuid
 import logging
+import tempfile
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 logger = logging.getLogger(__name__)
-
-CHART_DIR = "/tmp/frammer_charts"
-os.makedirs(CHART_DIR, exist_ok=True)
 
 FRAMMER_COLORS = px.colors.qualitative.Bold
 
@@ -31,8 +42,27 @@ PLOTLY_LAYOUT = dict(
 )
 
 
+def _get_chart_dir() -> str:
+    """
+    Resolve chart output directory at call time (not import time).
+
+    Priority:
+      1. FRAMMER_CHART_DIR env var  — set by chat.py to backend/data/charts/
+      2. Cross-platform temp dir    — tempfile.gettempdir() / frammer_charts
+         (works on Windows, Linux, macOS)
+    """
+    env_dir = os.environ.get("FRAMMER_CHART_DIR", "").strip()
+    if env_dir:
+        chart_dir = env_dir
+    else:
+        chart_dir = os.path.join(tempfile.gettempdir(), "frammer_charts")
+    os.makedirs(chart_dir, exist_ok=True)
+    return chart_dir
+
+
 def _save(fig, chart_id: str) -> str:
-    path = os.path.join(CHART_DIR, f"{chart_id}.png")
+    chart_dir = _get_chart_dir()
+    path = os.path.join(chart_dir, f"{chart_id}.png")
     fig.write_image(path, width=900, height=480, scale=2)
     return path
 
@@ -189,8 +219,7 @@ def generate_chart(
     num_cols = [c for c in df.columns if c not in cat_cols and
                 not _is_skip(c)]
 
-    # Fewer than 3 rows — not enough data for any meaningful chart
-    if len(df) < 3:  # fewer than 3 data points = no comparison or trend possible
+    if len(df) < 3:
         return None
 
     is_time, time_col = _is_time(df)
@@ -201,7 +230,7 @@ def generate_chart(
         volume_cols = [c for c in num_cols if c not in _RATE_COLS]
 
         if volume_cols and rate_cols:
-            if len(df) < 3:  # fewer than 3 time points = no trend to show on a dual-axis chart
+            if len(df) < 3:
                 return None
             path = _dual_axis_chart(
                 df, time_col,
@@ -211,7 +240,7 @@ def generate_chart(
             )
             return path, "dual_axis"
         else:
-            if len(df) < 4:  # fewer than 4 time points = not enough for a meaningful line trend
+            if len(df) < 4:
                 return None
             path = _line_chart(df, time_col, num_cols,
                                title=title, chart_id=chart_id)
@@ -221,8 +250,8 @@ def generate_chart(
     if len(cat_cols) >= 2 and len(num_cols) == 1:
         if (df[cat_cols[0]].nunique() <= 20 and
                 df[cat_cols[1]].nunique() <= 10 and
-                df[cat_cols[0]].nunique() >= 2 and  # fewer than 2 unique row values = no matrix to compare
-                df[cat_cols[1]].nunique() >= 2):     # fewer than 2 unique col values = single-column heatmap is meaningless
+                df[cat_cols[0]].nunique() >= 2 and
+                df[cat_cols[1]].nunique() >= 2):
             path = _heatmap(df, cat_cols[0], cat_cols[1],
                             num_cols[0], title=title, chart_id=chart_id)
             return path, "heatmap"
@@ -233,9 +262,8 @@ def generate_chart(
         rate_cols   = [c for c in num_cols if c in _RATE_COLS]
         volume_cols = [c for c in num_cols if c not in _RATE_COLS]
 
-        # Dual-axis: one volume + one rate col
         if len(volume_cols) >= 1 and len(rate_cols) == 1:
-            if df[cat].nunique() < 3:  # fewer than 3 bars = no comparison possible on a dual-axis chart
+            if df[cat].nunique() < 3:
                 return None
             df_sorted = df.sort_values(volume_cols[0], ascending=False)
             if len(df_sorted) > 15:
@@ -248,9 +276,8 @@ def generate_chart(
             )
             return path, "dual_axis"
 
-        # Multiple volume cols → grouped bar
         if len(volume_cols) >= 2:
-            if df[cat].nunique() < 3:  # fewer than 3 bars = no comparison possible
+            if df[cat].nunique() < 3:
                 return None
             df_sorted = df.sort_values(volume_cols[0], ascending=False)
             orient = "v" if df[cat].nunique() <= 8 else "h"
@@ -259,9 +286,8 @@ def generate_chart(
                               orientation=orient)
             return path, "bar"
 
-        # Single numeric col → horizontal bar
         if len(num_cols) == 1:
-            if df[cat].nunique() < 3:  # fewer than 3 bars = a single or double bar conveys no comparative insight
+            if df[cat].nunique() < 3:
                 return None
             df_sorted = df.sort_values(num_cols[0], ascending=False)
             if len(df_sorted) > 20:

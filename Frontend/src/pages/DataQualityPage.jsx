@@ -20,18 +20,18 @@ import {
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
 const API = "http://localhost:8000";
-const TT  = { contentStyle: { background: "#1a1b1e", border: "1px solid #333", borderRadius: 8, fontSize: 11, color: "#e0e0e0" } };
-const AX  = { tick: { fontSize: 10, fill: "#888" }, axisLine: false, tickLine: false };
+const TT = { contentStyle: { background: "#1a1b1e", border: "1px solid #333", borderRadius: 8, fontSize: 11, color: "#e0e0e0" } };
+const AX = { tick: { fontSize: 10, fill: "#888" }, axisLine: false, tickLine: false };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function friendlyFile(raw) {
   if (!raw) return "—";
   return raw
-    .replace("CLIENT1-channels.csv",                  "channels.csv")
-    .replace("channel-wise-publishing-duration.csv",   "pub-duration.csv")
-    .replace("channel-wise-publishing.csv",            "publishing.csv")
-    .replace("channel_user.csv",                       "channel×user.csv");
+    .replace("CLIENT1-channels.csv", "channels.csv")
+    .replace("channel-wise-publishing-duration.csv", "pub-duration.csv")
+    .replace("channel-wise-publishing.csv", "publishing.csv")
+    .replace("channel_user.csv", "channel×user.csv");
 }
 
 function fileScore(fail, warn) {
@@ -55,24 +55,24 @@ async function fetchChecks() {
 
 export default function DataQualityPage() {
 
-  const [expanded,     setExpanded]     = useState(null);
-  const [search,       setSearch]       = useState("");
+  const [expanded, setExpanded] = useState(null);
+  const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
 
   const { data: raw, isLoading, refetch } = useQuery({
     queryKey: ["dqChecks"],
-    queryFn:  fetchChecks,
+    queryFn: fetchChecks,
     staleTime: 30000,
   });
 
   // ── Derived ─────────────────────────────────────────────────────────────────
-  const total     = raw?.total   || 0;
-  const nFail     = raw?.fail    || 0;
-  const nWarn     = raw?.warn    || 0;
-  const nPass     = raw?.pass    || 0;
-  const ranAt     = raw?.ran_at;
-  const byFile    = raw?.by_file  || {};
-  const allChecks = raw?.checks   || [];
+  const total = raw?.total || 0;
+  const nFail = raw?.fail || 0;
+  const nWarn = raw?.warn || 0;
+  const nPass = raw?.pass || 0;
+  const ranAt = raw?.ran_at;
+  const byFile = raw?.by_file || {};
+  const allChecks = raw?.checks || [];
 
   // Sort files: FAIL first → WARN → PASS
   const sortedFiles = useMemo(() =>
@@ -88,10 +88,10 @@ export default function DataQualityPage() {
     sortedFiles
       .filter(([, d]) => d.fail + d.warn + d.pass > 0)
       .map(([file, d]) => ({
-        name:  friendlyFile(file).replace(".csv", "").slice(0, 22),
+        name: friendlyFile(file).replace(".csv", "").slice(0, 22),
         score: fileScore(d.fail, d.warn),
-        fail:  d.fail,
-        warn:  d.warn,
+        fail: d.fail,
+        warn: d.warn,
       })),
     [sortedFiles]
   );
@@ -106,7 +106,7 @@ export default function DataQualityPage() {
     if (statusFilter !== "ALL") list = list.filter(c => c.status === statusFilter);
     const q = search.trim().toLowerCase();
     if (q) list = list.filter(c =>
-      c.name.toLowerCase().includes(q)    ||
+      c.name.toLowerCase().includes(q) ||
       c.message.toLowerCase().includes(q) ||
       (c.table || "").toLowerCase().includes(q)
     );
@@ -152,13 +152,13 @@ export default function DataQualityPage() {
           icon={Shield}
           color={overallScore >= 80 ? "text-green-400" : overallScore >= 50 ? "text-yellow-400" : "text-red-400"}
         />
-        <KpiTile label="Total Checks" value={total}  icon={FileText}      color="text-blue-400" />
-        <KpiTile label="Passed"       value={nPass}  icon={CheckCircle}   color="text-green-400" />
-        <KpiTile label="Warnings"     value={nWarn}  icon={AlertTriangle} color="text-yellow-400" />
-        <KpiTile label="Failed"       value={nFail}  icon={XCircle}       color="text-red-400" />
+        <KpiTile label="Total Checks" value={total} icon={FileText} color="text-blue-400" />
+        <KpiTile label="Passed" value={nPass} icon={CheckCircle} color="text-green-400" />
+        <KpiTile label="Warnings" value={nWarn} icon={AlertTriangle} color="text-yellow-400" />
+        <KpiTile label="Failed" value={nFail} icon={XCircle} color="text-red-400" />
         <KpiTile
           label="Last Validated"
-          value={ranAt ? new Date(ranAt).toLocaleString(undefined, {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "Never"}
+          value={ranAt ? new Date(ranAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Never"}
           icon={RefreshCw}
           color="text-muted-foreground"
         />
@@ -190,6 +190,10 @@ export default function DataQualityPage() {
           </BarChart>
         </ResponsiveContainer>
 
+        <div className="mt-3 pt-3 border-t border-border/40 flex gap-2 text-[11px] text-muted-foreground mb-2">
+          <span className="text-yellow-400 shrink-0">💡</span>
+          <span>Files scoring below 80 have significant issues. Each failed check costs 15 points; each warning costs 8. Fix the lowest-scoring files first — they pose the greatest risk to analytics accuracy.</span>
+        </div>
         <div className="flex items-center gap-5 mt-3 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-red-400 inline-block" />Has failures</span>
           <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-yellow-400 inline-block" />Has warnings</span>
@@ -207,12 +211,12 @@ export default function DataQualityPage() {
 
       <div className="space-y-2 mb-8">
         {sortedFiles.map(([file, data], idx) => {
-          const score    = fileScore(data.fail, data.warn);
-          const isDb     = file.startsWith("db:");
-          const isOpen   = expanded === idx;
-          const border   = data.fail > 0 ? "border-red-500/40"
-                         : data.warn > 0 ? "border-yellow-500/30"
-                         :                 "border-green-500/25";
+          const score = fileScore(data.fail, data.warn);
+          const isDb = file.startsWith("db:");
+          const isOpen = expanded === idx;
+          const border = data.fail > 0 ? "border-red-500/40"
+            : data.warn > 0 ? "border-yellow-500/30"
+              : "border-green-500/25";
 
           return (
             <div key={file} className={`rounded-xl border ${border} bg-card overflow-hidden`}>
@@ -223,9 +227,9 @@ export default function DataQualityPage() {
                 {/* Icon */}
                 {isDb
                   ? <Database className={`h-4 w-4 shrink-0 ${data.fail > 0 ? "text-red-400" : data.warn > 0 ? "text-yellow-400" : "text-blue-400"}`} />
-                  : data.fail > 0 ? <XCircle      className="h-4 w-4 shrink-0 text-red-400" />
-                  : data.warn > 0 ? <AlertTriangle className="h-4 w-4 shrink-0 text-yellow-400" />
-                  :                 <CheckCircle   className="h-4 w-4 shrink-0 text-green-400" />}
+                  : data.fail > 0 ? <XCircle className="h-4 w-4 shrink-0 text-red-400" />
+                    : data.warn > 0 ? <AlertTriangle className="h-4 w-4 shrink-0 text-yellow-400" />
+                      : <CheckCircle className="h-4 w-4 shrink-0 text-green-400" />}
 
                 {/* Name */}
                 <span className="flex-1 text-sm font-medium font-mono truncate">
@@ -234,18 +238,17 @@ export default function DataQualityPage() {
 
                 {/* Badges */}
                 <div className="flex items-center gap-2.5 text-xs shrink-0">
-                  {data.fail > 0 && <Pill color="bg-red-500/10    text-red-400"    label={`${data.fail} FAIL`} />}
+                  {data.fail > 0 && <Pill color="bg-red-500/10    text-red-400" label={`${data.fail} FAIL`} />}
                   {data.warn > 0 && <Pill color="bg-yellow-500/10 text-yellow-500" label={`${data.warn} WARN`} />}
-                  {data.pass > 0 && <Pill color="bg-green-500/10  text-green-400"  label={`${data.pass} PASS`} />}
+                  {data.pass > 0 && <Pill color="bg-green-500/10  text-green-400" label={`${data.pass} PASS`} />}
 
-                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
-                    score >= 80 ? "bg-green-500/10 text-green-400" :
-                    score >= 50 ? "bg-yellow-500/10 text-yellow-500" :
-                                  "bg-red-500/10 text-red-400"
-                  }`}>{score}/100</span>
+                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${score >= 80 ? "bg-green-500/10 text-green-400" :
+                      score >= 50 ? "bg-yellow-500/10 text-yellow-500" :
+                        "bg-red-500/10 text-red-400"
+                    }`}>{score}/100</span>
 
                   {isOpen
-                    ? <ChevronUp   className="h-4 w-4 text-muted-foreground" />
+                    ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
                     : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
                 </div>
               </button>
@@ -263,7 +266,7 @@ export default function DataQualityPage() {
                       <table className="min-w-full text-xs">
                         <thead className="bg-muted/30">
                           <tr>
-                            {["Status","Check","Message","Count","%"].map(h => (
+                            {["Status", "Check", "Message", "Count", "%"].map(h => (
                               <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
@@ -282,8 +285,8 @@ export default function DataQualityPage() {
                               <td className="px-3 py-2 text-right whitespace-nowrap">
                                 {c.pct > 0
                                   ? <span className={c.pct > 80 ? "text-red-400 font-bold" : c.pct > 20 ? "text-yellow-500" : "text-muted-foreground"}>
-                                      {c.pct}%
-                                    </span>
+                                    {c.pct}%
+                                  </span>
                                   : <span className="text-muted-foreground/40">—</span>}
                               </td>
                             </tr>
@@ -317,20 +320,19 @@ export default function DataQualityPage() {
           </div>
           <div className="flex gap-1.5 flex-wrap">
             {[
-              { key: "ALL",  label: `All (${total})` },
+              { key: "ALL", label: `All (${total})` },
               { key: "FAIL", label: `FAIL (${nFail})` },
               { key: "WARN", label: `WARN (${nWarn})` },
               { key: "PASS", label: `PASS (${nPass})` },
             ].map(({ key, label }) => (
               <button key={key} onClick={() => setStatusFilter(key)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-                  statusFilter === key
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${statusFilter === key
                     ? key === "FAIL" ? "bg-red-500/20 text-red-400 border-red-500/40"
-                    : key === "WARN" ? "bg-yellow-500/20 text-yellow-500 border-yellow-500/40"
-                    : key === "PASS" ? "bg-green-500/20 text-green-400 border-green-500/40"
-                    :                  "bg-primary/20 text-primary border-primary/40"
+                      : key === "WARN" ? "bg-yellow-500/20 text-yellow-500 border-yellow-500/40"
+                        : key === "PASS" ? "bg-green-500/20 text-green-400 border-green-500/40"
+                          : "bg-primary/20 text-primary border-primary/40"
                     : "bg-muted/30 text-muted-foreground border-border/50 hover:bg-muted/60"
-                }`}>
+                  }`}>
                 {label}
               </button>
             ))}
@@ -341,7 +343,7 @@ export default function DataQualityPage() {
           <table className="min-w-full text-xs">
             <thead className="bg-muted/40 sticky top-0">
               <tr>
-                {["Status","File / Table","Check Name","Message","Count","%"].map(h => (
+                {["Status", "File / Table", "Check Name", "Message", "Count", "%"].map(h => (
                   <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -371,8 +373,8 @@ export default function DataQualityPage() {
                   <td className="px-3 py-2 text-right whitespace-nowrap">
                     {c.pct > 0
                       ? <span className={c.pct > 80 ? "text-red-400 font-bold" : c.pct > 20 ? "text-yellow-500" : "text-muted-foreground"}>
-                          {c.pct}%
-                        </span>
+                        {c.pct}%
+                      </span>
                       : <span className="text-muted-foreground/40">—</span>}
                   </td>
                 </tr>
