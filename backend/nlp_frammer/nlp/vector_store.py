@@ -1,16 +1,7 @@
-# nlp/vector_store.py
-#
-# ChromaDB setup and indexing.
-# Embeds all chunks from metadata.py, metrics.py, and examples.py
-# and stores them in a single persistent ChromaDB collection.
-#
-# Called once via: python scripts/build_index.py
-# Used at query time via: get_collection()
-
 import os
 from typing import Optional
 import chromadb
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+import chromadb.utils.embedding_functions as embedding_functions
 
 from nlp.metadata import METADATA
 from nlp.metrics import METRICS
@@ -22,10 +13,7 @@ from nlp.examples import EXAMPLES
 
 CHROMA_DB_PATH   = os.path.join(os.path.dirname(__file__), "..", "data", "chroma_db")
 COLLECTION_NAME  = "frammer_analytics"
-EMBEDDING_MODEL  = "all-MiniLM-L6-v2"
 
-# Single combined collection — all chunk types live here.
-# The `type` metadata field distinguishes them if needed for filtering.
 ALL_CHUNKS = METADATA + METRICS + EXAMPLES
 
 # ──────────────────────────────────────────────────────────────────────
@@ -37,32 +25,22 @@ def _get_client():
     os.makedirs(CHROMA_DB_PATH, exist_ok=True)
     return chromadb.PersistentClient(path=CHROMA_DB_PATH)
 
-
-def _get_embedding_fn() -> SentenceTransformerEmbeddingFunction:
-    """Returns the sentence-transformers embedding function.
-    Model is downloaded (~91MB) on first call and cached automatically."""
-    return SentenceTransformerEmbeddingFunction(
-        model_name=EMBEDDING_MODEL,
-        device="cpu",          # no GPU needed — model is tiny
-        normalize_embeddings=True,
+def _get_embedding_fn():
+    """Returns the Google Gemini API embedding function (Zero local RAM)."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY is missing from environment variables.")
+    
+    return embedding_functions.GoogleGenerativeAiEmbeddingFunction(
+        api_key=api_key,
+        task_type="RETRIEVAL_DOCUMENT"
     )
-
 
 # ──────────────────────────────────────────────────────────────────────
 # PUBLIC: GET COLLECTION (used by retriever at query time)
 # ──────────────────────────────────────────────────────────────────────
 
 def get_collection():
-    """
-    Returns the ChromaDB collection for querying.
-
-    Auto-recovery: if the collection UUID is stale (chroma.sqlite3 references
-    a UUID whose data folder was deleted or re-created), this catches the
-    NotFoundError and rebuilds the index from scratch automatically.
-
-    This prevents the "Collection UUID does not exist" 500 error after
-    running build_index.py --force or manually deleting chroma_db contents.
-    """
     client = _get_client()
     existing = [c.name for c in client.list_collections()]
 
@@ -78,13 +56,10 @@ def get_collection():
             embedding_function=_get_embedding_fn(),
         )
     except Exception as e:
-        # UUID mismatch — sqlite3 has a stale reference to a deleted data folder.
-        # Auto-recover by wiping and rebuilding the index.
         if "does not exist" in str(e).lower() or "notfounderror" in type(e).__name__.lower():
             import logging
             logging.getLogger(__name__).warning(
-                f"[vector_store] Stale ChromaDB UUID detected — auto-rebuilding index. "
-                f"Error was: {e}"
+                f"[vector_store] Stale ChromaDB UUID detected — auto-rebuilding index."
             )
             index_all(force=True)
             return client.get_collection(
@@ -93,21 +68,11 @@ def get_collection():
             )
         raise
 
-
 # ──────────────────────────────────────────────────────────────────────
 # PUBLIC: INDEX ALL CHUNKS (called once from build_index.py)
 # ──────────────────────────────────────────────────────────────────────
 
 def index_all(force: bool = False) -> None:
-    """
-    Embeds and upserts all chunks into ChromaDB.
-
-    Args:
-        force: If True, deletes and recreates the collection from scratch.
-               If False (default), upserts — safe to re-run, no duplicates.
-
-    Logs a summary of what was indexed on completion.
-    """
     client       = _get_client()
     embedding_fn = _get_embedding_fn()
 
@@ -120,7 +85,7 @@ def index_all(force: bool = False) -> None:
     collection = client.get_or_create_collection(
         name=COLLECTION_NAME,
         embedding_function=embedding_fn,
-        metadata={"hnsw:space": "cosine"},  # cosine similarity for semantic search
+        metadata={"hnsw:space": "cosine"}, 
     )
 
     ids       = []
@@ -135,7 +100,6 @@ def index_all(force: bool = False) -> None:
             "tables": ", ".join(chunk.get("tables", [])),
         })
 
-    # upsert is idempotent — re-running won't create duplicates
     collection.upsert(
         ids=ids,
         documents=documents,
@@ -144,22 +108,9 @@ def index_all(force: bool = False) -> None:
 
     counts = _count_by_type(ALL_CHUNKS)
     print(
-        f"[vector_store] Index built successfully.\n"
-        f"  Collection : {COLLECTION_NAME}\n"
-        f"  Path       : {os.path.abspath(CHROMA_DB_PATH)}\n"
+        f"[vector_store] Index built successfully with Gemini API.\n"
         f"  Total chunks indexed: {len(ALL_CHUNKS)}\n"
-        f"    table      : {counts.get('table', 0)}\n"
-        f"    metric     : {counts.get('metric', 0)}\n"
-        f"    example    : {counts.get('example', 0)}\n"
-        f"    relationship: {counts.get('relationship', 0)}\n"
-        f"    limitation : {counts.get('limitation', 0)}\n"
-        f"    sql_rules  : {counts.get('sql_rules', 0)}\n"
     )
-
-
-# ──────────────────────────────────────────────────────────────────────
-# HELPER
-# ──────────────────────────────────────────────────────────────────────
 
 def _count_by_type(chunks: list[dict]) -> dict[str, int]:
     counts: dict[str, int] = {}
