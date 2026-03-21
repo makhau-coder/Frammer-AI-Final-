@@ -112,6 +112,18 @@ def _fire_pipeline() -> None:
 
 def _start_watcher() -> None:
     """Start watchdog observer on data/raw/ in a daemon thread."""
+    import os # Just in case it isn't imported locally in this scope
+    
+    # ── FIX: Ensure the directory exists before watchdog tries to attach to it
+    if not os.path.exists(DATA_PATH):
+        try:
+            os.makedirs(DATA_PATH, exist_ok=True)
+            logger.info(f"[watcher] Created missing directory: {DATA_PATH}")
+        except Exception as e:
+            logger.warning(f"[watcher] Could not create {DATA_PATH}. Watcher disabled: {e}")
+            return
+    # ─────────────────────────────────────────────────────────
+
     try:
         from watchdog.observers import Observer
         from watchdog.events    import FileSystemEventHandler
