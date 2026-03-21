@@ -1,12 +1,22 @@
+# services:
+#   - type: web
+#     name: frammer-backend
+#     runtime: python
+#     buildCommand: >-
+#       pip install --upgrade pip &&
+#       pip install --only-binary=duckdb,pandas,numpy duckdb==1.1.3 pandas==2.2.3 numpy &&
+#       pip install -r requirements.txt
+#     startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+#     envVars:
+#       - key: ENV
+#         value: production
+
 services:
   - type: web
     name: frammer-backend
     runtime: python
-    buildCommand: >-
-      pip install --upgrade pip &&
-      pip install --only-binary=duckdb,pandas,numpy duckdb==1.1.3 pandas==2.2.3 numpy &&
-      pip install -r requirements.txt
-    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install fastapi uvicorn
+    startCommand: uvicorn api.test_main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: ENV
-        value: production
+        value: test
