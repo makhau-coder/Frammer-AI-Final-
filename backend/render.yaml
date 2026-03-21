@@ -11,12 +11,25 @@
 #       - key: ENV
 #         value: production
 
+# services:
+#   - type: web
+#     name: frammer-backend
+#     runtime: python
+#     buildCommand: pip install fastapi uvicorn
+#     startCommand: uvicorn api.test_main:app --host 0.0.0.0 --port $PORT
+#     envVars:
+#       - key: ENV
+#         value: test
+
 services:
   - type: web
     name: frammer-backend
-    runtime: python
-    buildCommand: pip install fastapi uvicorn
-    startCommand: uvicorn api.test_main:app --host 0.0.0.0 --port $PORT
+    runtime: docker
+    plan: starter
     envVars:
       - key: ENV
-        value: test
+        value: production
+    disk:
+      name: frammer-storage
+      mountPath: /var/data
+      sizeGB: 1

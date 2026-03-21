@@ -1,12 +1,7 @@
-# api/test_main.py
 from fastapi import FastAPI
 
-app = FastAPI(title="Render Test API")
+app = FastAPI()
 
 @app.get("/")
-def health_check():
-    return {
-        "status": "success",
-        "message": "Render port binding is working perfectly!",
-        "version": "test-1.0"
-    }
+def home():
+    return {"status": "success", "message": "Port binding is working!"}
