@@ -58,6 +58,11 @@ Production data for a single client covering March 2025 – February 2026.
 4. NO TEAM ANALYSIS — all team_name values are 'Unknown'. → CANNOT_ANSWER
 5. OUT-OF-RANGE MONTHS — outside Mar 2025 – Feb 2026. → CANNOT_ANSWER
 
+CRITICAL RULE for Platform Queries:
+If the user asks about a specific platform like 'YouTube' or 'Instagram', check the schema first. 
+- If the table has a column named 'Platform', use: WHERE "Platform" = 'YouTube'.
+- If the table has columns named 'YouTube', 'Instagram', 'Shorts', etc., do NOT use a WHERE clause for platform. Instead, SELECT that specific column. 
+Example for 'YouTube info': SELECT "Channel", "YouTube" FROM channel_wise_publishing;
 
 ━━━ SQL RULES ━━━
 1. DIVISION SAFETY  — always wrap denominators in NULLIF(..., 0).

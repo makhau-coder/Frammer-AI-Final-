@@ -24,6 +24,12 @@
 # FIXED vs LAST version:
 #   - run() restores thread_id parameter (LAST dropped it, re-introduced
 #     module-level CONFIG with hardcoded thread_id="main" — breaks multi-user)
+#
+# FIX — Classifier history awareness:
+#   - Classifier now receives recent conversation history before the current
+#     user message so that confirmation replies ("yes", "that's correct")
+#     are correctly routed as DATA instead of GENERAL.
+#   - _CLASSIFIER_PROMPT updated to explicitly handle confirmation replies.
 
 from __future__ import annotations
 
@@ -119,7 +125,7 @@ CANNOT_ANSWER: <one sentence why> | <suggestion 1> | <suggestion 2> | <suggestio
 # ──────────────────────────────────────────────────────────────────────
 # GENERAL QUESTION PROMPTS
 # Split into two calls:
-#   1. _CLASSIFIER_PROMPT   — routes DATA vs GENERAL (no schema, 8 tokens)
+#   1. _CLASSIFIER_PROMPT   — routes DATA vs GENERAL (with history, 8 tokens)
 #   2. _GENERAL_ANSWER_PROMPT — answers the general question (schema injected)
 # Kept separate so SYSTEM_PROMPT (SQL instructions) never interferes.
 # ──────────────────────────────────────────────────────────────────────
@@ -132,8 +138,12 @@ The user is asking about the software platform itself, asking for definitions of
 Examples: "what is frammer ai", "what does publish rate mean", "hi", "what metrics do you have"
 
 DATA:
-The user wants specific information, stats, or details about the content. IF THE USER MENTIONS A SPECIFIC PERSON, CHANNEL, PLATFORM, OR DATE, IT IS ALWAYS DATA.
-Examples: "give info about channel q", "give info about neha", "how many videos were uploaded", "top 5 users"
+The user wants specific information, stats, or details about the content.
+IF THE USER MENTIONS A SPECIFIC PERSON, CHANNEL, PLATFORM, OR DATE, IT IS ALWAYS DATA.
+IF THE CONVERSATION HISTORY SHOWS THE ASSISTANT ASKED A CLARIFICATION QUESTION AND
+THE USER IS RESPONDING TO IT (e.g. "yes", "no", "yes that's correct", "the first one"),
+IT IS ALWAYS DATA — treat it as a continuation of the previous data request.
+Examples: "give info about channel q", "how many videos were uploaded", "yes", "yes that's right"
 
 Reply with exactly one word: GENERAL or DATA
 """.strip()
@@ -177,11 +187,8 @@ def _load_known_entities() -> dict[str, list[str]]:
         len(raw_path) >= 2
         and raw_path[1] == ":"
         and raw_path[0].isalpha()
-        and os.name != "nt"          # only block Windows paths when running on Linux/Mac
+        and os.name != "nt"
     ):
-        # Windows absolute path detected on a non-Windows server — use relative fallback
-        # so a dev's local .env doesn't break the production server.
-        # On Windows itself (os.name == "nt") the path is used as-is.
         logger.warning(
             f"[agent] FRAMMER_DB_PATH is a Windows path ({raw_path!r}) but "
             f"server is not Windows. Using fallback: {_fallback_db}"
@@ -200,7 +207,7 @@ def _load_known_entities() -> dict[str, list[str]]:
         "Month":       ("monthly_chart",                                   "Month"),
     }
 
-    # Star schema dimension tables (LAST version addition)
+    # Star schema dimension tables
     STAR_SOURCES = {
         "Platform": ("dim_platform", "platform_name"),
     }
@@ -223,6 +230,13 @@ def _load_known_entities() -> dict[str, list[str]]:
             _KNOWN_ENTITIES[label] = [r[0] for r in rows]
 
         conn.close()
+
+        _KNOWN_ENTITIES["Platform"] = [
+            "YouTube", "Instagram", "Facebook", "Shorts", "Reels", 
+            "TikTok", "X", "LinkedIn", "Threads"
+        ]
+
+        
         logger.info(
             f"[agent] Known entities loaded: "
             f"{ {k: len(v) for k, v in _KNOWN_ENTITIES.items()} }"
@@ -243,9 +257,6 @@ def _format_entities() -> str:
 
 # ──────────────────────────────────────────────────────────────────────
 # TOKEN NORMALIZERS
-# Run BEFORE fuzzy matching so natural phrases like "February 2026" or
-# "Hindi" are converted to DB representations ("Feb, 2026", "hi") and
-# picked up by the high-confidence pass.
 # ──────────────────────────────────────────────────────────────────────
 
 _MONTH_ALIASES: dict[str, str] = {
@@ -260,12 +271,19 @@ _LANGUAGE_ALIASES: dict[str, str] = {
     "arabic":  "ar", "marathi": "mr", "mixed": "mix",
 }
 
+_PLATFORM_ALIASES: dict[str, str] = {
+    "yt": "youtube", "youtube": "youtube",
+    "ig": "instagram", "insta": "instagram", "instagram": "instagram",
+    "fb": "facebook", "facebook": "facebook",
+    "tw": "x", "twitter": "x", "x": "x",
+    "tt": "tiktok", "tiktok": "tiktok",
+    "li": "linkedin", "linkedin": "linkedin",
+    "thread": "threads", "threads": "threads",
+    "shorts": "shorts", "reels": "reels"
+}
+
 
 def _normalize_month_tokens(tokens: list[str]) -> list[str]:
-    """
-    "february" → "Feb, 2026" (with year) or resolves against known DB months
-    (without year) so it hits the high-confidence pass silently.
-    """
     extra: list[str] = []
     years = [t for t in tokens if re.fullmatch(r"20\d{2}", t)]
     resolved_abbrevs: list[str] = []
@@ -298,7 +316,6 @@ def _normalize_month_tokens(tokens: list[str]) -> list[str]:
 
 
 def _normalize_language_tokens(tokens: list[str]) -> list[str]:
-    """"hindi" → "hi", "english" → "en" — with typo tolerance (cutoff 0.80)."""
     extra: list[str] = []
     for token in tokens:
         if token in _LANGUAGE_ALIASES:
@@ -313,6 +330,17 @@ def _normalize_language_tokens(tokens: list[str]) -> list[str]:
                 code = _LANGUAGE_ALIASES[matches[0]]
                 if code not in extra:
                     extra.append(code)
+    return tokens + extra
+
+
+def _normalize_platform_tokens(tokens: list[str]) -> list[str]:
+    """ Translates shorthand like 'ig' -> 'Instagram' before fuzzy matching """
+    extra: list[str] = []
+    for token in tokens:
+        if token in _PLATFORM_ALIASES:
+            val = _PLATFORM_ALIASES[token]
+            if val not in extra:
+                extra.append(val)
     return tokens + extra
 
 
@@ -338,8 +366,6 @@ def _format_entities_for_clarification(user_question: str) -> str:
     ]
 
     # ── CHANNEL LETTER RESCUE ─────────────────────────────────────────
-    # Single letters like "a", "d" are valid channel names but get wiped
-    # by stopwords. "channel X" → preserve X explicitly.
     channel_refs = re.findall(r'\bchannel\s+([a-zA-Z])\b', user_question, re.IGNORECASE)
     for ref in channel_refs:
         t = ref.lower()
@@ -361,6 +387,7 @@ def _format_entities_for_clarification(user_question: str) -> str:
     # Normalize months and languages BEFORE fuzzy matching
     tokens = _normalize_month_tokens(tokens)
     tokens = _normalize_language_tokens(tokens)
+    tokens = _normalize_platform_tokens(tokens)
 
     lines: list[str] = []
     for label, values in entities.items():
@@ -375,7 +402,6 @@ def _format_entities_for_clarification(user_question: str) -> str:
                 if v not in high_conf:
                     high_conf.append(v)
 
-            # YOUR FIX: cutoff 0.35 (was 0.2 — too aggressive, caused false prompts)
             for m in difflib.get_close_matches(token, list(values_lower.keys()), n=3, cutoff=0.35):
                 v = values_lower.get(m, m)
                 if v not in high_conf and v not in low_conf:
@@ -446,14 +472,20 @@ def _parse_clarify(text: str) -> dict:
 def node_generate_sql(state: AgentState) -> dict:
 
     # ── STEP 1: Route — GENERAL question or DATA query? ───────────────
-    # Tiny call: no schema, thinking disabled, max 8 output tokens.
-    # Outputs exactly one word: GENERAL or DATA.
+    # Recent history is injected so that confirmation replies ("yes",
+    # "that's correct") are classified as DATA rather than GENERAL.
+    # The classifier still outputs one word; history only adds input context.
+    all_msgs: list[BaseMessage] = state["messages"]  # type: ignore[assignment]
+    history = all_msgs[:-1] if all_msgs else []
+    recent_history = history[-4:] if len(history) > 4 else history
+
     try:
+        classifier_messages: list[BaseMessage] = [SystemMessage(content=_CLASSIFIER_PROMPT)]
+        classifier_messages.extend(recent_history)   # inject last 4 turns for context
+        classifier_messages.append(HumanMessage(content=state["user_question"]))
+
         route_raw = str(
-            _get_llm_classifier().invoke([
-                SystemMessage(content=_CLASSIFIER_PROMPT),
-                HumanMessage(content=state["user_question"]),
-            ]).content
+            _get_llm_classifier().invoke(classifier_messages).content
         ).strip().upper()
         logger.info(f"[agent] Classifier route: {route_raw!r}")
     except Exception as e:
@@ -499,9 +531,6 @@ def node_generate_sql(state: AgentState) -> dict:
 
     messages: list[BaseMessage] = [SystemMessage(content=system_text)]
 
-    all_msgs: list[BaseMessage] = state["messages"]  # type: ignore[assignment]
-    history = all_msgs[:-1] if all_msgs else []
-    recent_history = history[-4:] if len(history) > 4 else history
     messages.extend(recent_history)
 
     entity_reminder = f"""Before writing any SQL, check every name, month, channel,
@@ -515,6 +544,7 @@ RULES — follow strictly in order:
 1. SILENT CORRECT — high confidence match:
    The value is clearly a casing difference or minor typo of the known value.
    → Use the known value directly in the SQL.
+   → ⚠️ PLATFORM OVERRIDE: If the matched value is a Platform (like 'YouTube' or 'Instagram'), check the table schema FIRST. If the platform is a COLUMN NAME (e.g., in channel_wise_publishing), you MUST SELECT the column (SELECT "YouTube"). DO NOT use a WHERE clause like WHERE "Platform" = 'YouTube'.
    → Add one comment: -- Interpreted "chandan" as "Chandan"
    Example: "chandan" → "Chandan", "neh" → "Neha", "february 2026" → "Feb, 2026",
             "hindi" → "hi", "english" → "en"
