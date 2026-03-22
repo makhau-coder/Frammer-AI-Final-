@@ -302,7 +302,8 @@ export function Chatbot() {
     if (sizeMode === 'half') {
       return {
         right: 0, bottom: 0, top: 0,
-        width: 'min(50vw, 720px)',
+        width: 'max(50vw, min(100vw, 400px))',
+        maxWidth: '720px',
         height: '100dvh',
         borderRadius: '0',
       };
@@ -316,7 +317,13 @@ export function Chatbot() {
       };
     }
     // compact
-    return { width: 380, height: 520, bottom: 24, right: 24, borderRadius: 12 };
+    return { 
+      width: 'min(380px, calc(100vw - 32px))', 
+      height: 'min(520px, calc(100dvh - 32px))', 
+      bottom: '16px', 
+      right: '16px', 
+      borderRadius: '12px' 
+    };
   };
 
   // ── Closed: floating button ───────────────────────────────────────
@@ -325,7 +332,7 @@ export function Chatbot() {
       <button
         onClick={() => setOpen(true)}
         title={`Ask about ${ctx.label}`}
-        className="fixed bottom-6 right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg hover:opacity-90 transition-opacity"
+        className="fixed bottom-4 right-4 md:bottom-6 md:right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg hover:opacity-90 transition-opacity"
       >
         <MessageCircle className="h-5 w-5" />
       </button>
@@ -394,7 +401,7 @@ export function Chatbot() {
       {messages.length <= 1 && (
         <div className="border-b border-border/50 px-4 py-2.5 shrink-0 bg-muted/10">
           <p className="text-[10px] text-muted-foreground mb-1.5">Suggested for this page:</p>
-          <div className={`grid gap-1.5 ${sizeMode === 'compact' ? 'grid-cols-1' : 'grid-cols-2'}`}>
+          <div className={`grid gap-1.5 ${sizeMode === 'compact' ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2'}`}>
             {ctx.suggestions.map((s, i) => (
               <button
                 key={i}
@@ -442,7 +449,7 @@ export function Chatbot() {
       </ScrollArea>
 
       {/* ── Input ────────────────────────────────────────────────────── */}
-      <div className={`border-t border-border p-3 shrink-0 bg-card/95 ${sizeMode !== 'compact' ? 'px-6 py-4' : ''}`}>
+      <div className={`border-t border-border p-3 shrink-0 bg-card/95 ${sizeMode !== 'compact' ? 'md:px-6 md:py-4' : ''}`}>
         <div className={`flex items-center gap-2 ${sizeMode !== 'compact' ? 'max-w-3xl mx-auto' : ''}`}>
           <Input
             ref={inputRef}

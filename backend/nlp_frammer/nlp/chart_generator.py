@@ -204,8 +204,7 @@ def generate_chart(
 ) -> tuple[str, str] | None:
     """
     Main entry point.
-    Returns (chart_path, chart_type) or None if no chart is appropriate
-    (e.g. single-row stat, empty data, or unrecognised shape).
+    Returns (chart_path, chart_type) or None if no chart is appropriate.
     """
     if not data or len(data) == 0:
         return None
@@ -214,12 +213,13 @@ def generate_chart(
     chart_id = str(uuid.uuid4())[:8]
     title = question[:80]
 
-    cat_cols = [c for c in df.columns if _is_skip(c) or
-                df[c].dtype == object]
-    num_cols = [c for c in df.columns if c not in cat_cols and
-                not _is_skip(c)]
+    cat_cols = [c for c in df.columns if _is_skip(c) or df[c].dtype == object]
+    num_cols = [c for c in df.columns if c not in cat_cols and not _is_skip(c)]
 
-    if len(df) < 3:
+    # THE GOLDILOCKS FIX: We must have at least 2 rows to draw a meaningful chart.
+    # This prevents silly 1-bar charts for specific people/channels, 
+    # but allows charts for "all users", "monthly data", or comparisons.
+    if len(df) < 2:
         return None
 
     is_time, time_col = _is_time(df)
@@ -230,8 +230,6 @@ def generate_chart(
         volume_cols = [c for c in num_cols if c not in _RATE_COLS]
 
         if volume_cols and rate_cols:
-            if len(df) < 3:
-                return None
             path = _dual_axis_chart(
                 df, time_col,
                 bar_col=volume_cols[0],
@@ -240,8 +238,6 @@ def generate_chart(
             )
             return path, "dual_axis"
         else:
-            if len(df) < 4:
-                return None
             path = _line_chart(df, time_col, num_cols,
                                title=title, chart_id=chart_id)
             return path, "line"
@@ -249,9 +245,7 @@ def generate_chart(
     # ── Rule 2: Two categoricals + 1 numeric → heatmap ────────────
     if len(cat_cols) >= 2 and len(num_cols) == 1:
         if (df[cat_cols[0]].nunique() <= 20 and
-                df[cat_cols[1]].nunique() <= 10 and
-                df[cat_cols[0]].nunique() >= 2 and
-                df[cat_cols[1]].nunique() >= 2):
+                df[cat_cols[1]].nunique() <= 10):
             path = _heatmap(df, cat_cols[0], cat_cols[1],
                             num_cols[0], title=title, chart_id=chart_id)
             return path, "heatmap"
@@ -262,9 +256,8 @@ def generate_chart(
         rate_cols   = [c for c in num_cols if c in _RATE_COLS]
         volume_cols = [c for c in num_cols if c not in _RATE_COLS]
 
+        # Dual Axis (Volume + Rate)
         if len(volume_cols) >= 1 and len(rate_cols) == 1:
-            if df[cat].nunique() < 3:
-                return None
             df_sorted = df.sort_values(volume_cols[0], ascending=False)
             if len(df_sorted) > 15:
                 df_sorted = df_sorted.head(15)
@@ -276,9 +269,8 @@ def generate_chart(
             )
             return path, "dual_axis"
 
+        # Grouped Bar Chart (Multiple Volumes)
         if len(volume_cols) >= 2:
-            if df[cat].nunique() < 3:
-                return None
             df_sorted = df.sort_values(volume_cols[0], ascending=False)
             orient = "v" if df[cat].nunique() <= 8 else "h"
             path = _bar_chart(df_sorted, cat, volume_cols[:4],
@@ -286,9 +278,8 @@ def generate_chart(
                               orientation=orient)
             return path, "bar"
 
+        # Standard Bar Chart (Single Metric)
         if len(num_cols) == 1:
-            if df[cat].nunique() < 3:
-                return None
             df_sorted = df.sort_values(num_cols[0], ascending=False)
             if len(df_sorted) > 20:
                 df_sorted = df_sorted.head(20)
@@ -299,4 +290,3 @@ def generate_chart(
             return path, "bar"
 
     return None
-

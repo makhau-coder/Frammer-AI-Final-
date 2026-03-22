@@ -20,8 +20,8 @@ function LiveClock() {
   const timeStr = time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
   return (
-    <div className="hidden lg:flex items-center gap-2 text-xs text-muted-foreground/60 font-mono tabular-nums select-none border-r border-border/40 pr-4 mr-1">
-      <Clock className="h-3 w-3 shrink-0" />
+    <div className="hidden lg:flex items-center gap-2 text-sm text-muted-foreground/60 font-mono tabular-nums select-none border-r border-border/40 pr-4 mr-1">
+      <Clock className="h-4 w-4 shrink-0" />
       <span>{dateStr}</span>
       <span className="opacity-40">·</span>
       <span>{timeStr}</span>
@@ -67,7 +67,7 @@ function KpiTicker() {
 
   if (!metrics.length) {
     return (
-      <div className="hidden min-[1100px]:flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/40 border border-border/30 text-[11px] text-muted-foreground/50 select-none">
+      <div className="hidden min-[1100px]:flex items-center gap-2 px-3.5 py-2 rounded-full bg-muted/40 border border-border/30 text-xs text-muted-foreground/50 select-none">
         <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30 animate-pulse" />
         Loading metrics…
       </div>
@@ -88,14 +88,14 @@ function KpiTicker() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -6 }}
           transition={{ duration: 0.3 }}
-          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-[11px] font-medium tracking-wide ${up ? 'bg-emerald-500/8 border-emerald-500/20 text-emerald-400'
+          className={`flex items-center gap-2 px-4 py-2 rounded-full border text-xs font-medium tracking-wide ${up ? 'bg-emerald-500/8 border-emerald-500/20 text-emerald-400'
             : down ? 'bg-red-500/8 border-red-500/20 text-red-400'
               : 'bg-muted/40 border-border/30 text-muted-foreground/60'
             }`}
         >
-          {up && <TrendingUp className="h-3 w-3 shrink-0" />}
-          {down && <TrendingDown className="h-3 w-3 shrink-0" />}
-          {flat && <Minus className="h-3 w-3 shrink-0 opacity-50" />}
+          {up && <TrendingUp className="h-4 w-4 shrink-0" />}
+          {down && <TrendingDown className="h-4 w-4 shrink-0" />}
+          {flat && <Minus className="h-4 w-4 shrink-0 opacity-50" />}
 
           <span>{m.label}</span>
           <span className="opacity-40">·</span>
@@ -110,7 +110,7 @@ function KpiTicker() {
             </>
           )}
 
-          <span className="opacity-25 text-[10px]">vs last month</span>
+          <span className="opacity-25 text-[11px]">vs last month</span>
 
           {/* Dot pagination */}
           {metrics.length > 1 && (
@@ -136,11 +136,11 @@ function NotificationBell() {
     <div className="relative">
       <button
         onClick={() => setOpen(v => !v)}
-        className="relative flex h-8 w-8 items-center justify-center rounded-xl border border-border/40 bg-card/60 text-muted-foreground hover:text-foreground hover:border-border hover:bg-card transition-all duration-150"
+        className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-border/40 bg-card/60 text-muted-foreground hover:text-foreground hover:border-border hover:bg-card transition-all duration-150"
       >
-        <Bell className="h-3.5 w-3.5" />
+        <Bell className="h-4 w-4" />
         {/* Red dot badge */}
-        <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-primary ring-1 ring-background" />
+        <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-primary ring-1 ring-background" />
       </button>
     </div>
   );
@@ -149,15 +149,15 @@ function NotificationBell() {
 // ─── User avatar with initials ────────────────────────────────────────
 function UserMenu() {
   return (
-    <button className="flex items-center gap-2 rounded-xl border border-border/40 bg-card/60 pl-1 pr-2.5 py-1 hover:border-border hover:bg-card transition-all duration-150 group">
-      <Avatar className="h-6 w-6 shrink-0">
-        <AvatarFallback className="bg-primary text-primary-foreground text-[10px] font-bold">
+    <button className="flex items-center gap-2 rounded-xl border border-border/40 bg-card/60 pl-1.5 pr-3 py-1.5 hover:border-border hover:bg-card transition-all duration-150 group">
+      <Avatar className="h-7 w-7 shrink-0">
+        <AvatarFallback className="bg-primary text-primary-foreground text-xs font-bold">
           FA
         </AvatarFallback>
       </Avatar>
       <div className="hidden sm:flex flex-col items-start leading-none">
-        <span className="text-[11px] font-semibold text-foreground">Frammer AI</span>
-        <span className="text-[10px] text-muted-foreground/60">Admin</span>
+        <span className="text-xs font-semibold text-foreground">Frammer AI</span>
+        <span className="text-[11px] text-muted-foreground/60 mt-0.5">Admin</span>
       </div>
     </button>
   );
@@ -165,16 +165,16 @@ function UserMenu() {
 
 // ─── Separator ───────────────────────────────────────────────────────
 function Sep() {
-  return <div className="h-5 w-px bg-border/40 mx-0.5 shrink-0" />;
+  return <div className="h-6 w-px bg-border/40 mx-1 shrink-0" />;
 }
 
 // ─── Page title with subtle breadcrumb accent ─────────────────────────
 function PageTitle({ title }) {
   return (
-    <div className="flex items-center gap-2.5 min-w-0">
+    <div className="flex items-center gap-3 min-w-0">
       {/* Accent bar */}
-      <div className="h-5 w-0.5 rounded-full bg-primary shrink-0 opacity-80" />
-      <h1 className="text-sm font-semibold text-foreground truncate tracking-tight">
+      <div className="h-6 w-1 rounded-full bg-primary shrink-0 opacity-80" />
+      <h1 className="text-base font-semibold text-foreground truncate tracking-tight">
         {title}
       </h1>
     </div>
@@ -186,7 +186,7 @@ export function Header({ title }) {
   return (
     <header className="sticky top-0 z-20">
       {/* Glassmorphism + subtle bottom border */}
-      <div className="relative flex h-12 items-center gap-3 px-3 bg-background/80 backdrop-blur-md border-b border-border/50">
+      <div className="relative flex h-14 items-center gap-4 px-4 bg-background/80 backdrop-blur-md border-b border-border/50">
 
         {/* Subtle gradient overlay for depth */}
         <div
@@ -198,7 +198,7 @@ export function Header({ title }) {
 
         {/* Left group */}
         <div className="relative flex items-center gap-2 shrink-0">
-          <SidebarTrigger className="h-7 w-7 rounded-lg border border-border/40 bg-card/50 text-muted-foreground hover:text-foreground hover:bg-card hover:border-border transition-all duration-150 flex items-center justify-center shrink-0" />
+          <SidebarTrigger className="h-8 w-8 rounded-lg border border-border/40 bg-card/50 text-muted-foreground hover:text-foreground hover:bg-card hover:border-border transition-all duration-150 flex items-center justify-center shrink-0" />
           <Sep />
           <PageTitle title={title} />
         </div>

@@ -26,13 +26,23 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon" className="border-none bg-sidebar">
       <SidebarContent>
-        <div className="flex items-center justify-center gap-2 px-4 py-4">
-          {!collapsed && (
-            <img src="src/components/ui/logo.png" alt="Frammer AI" className="h-7 mt-1.5 mr-7" />
-          )}
+        <div className="flex items-center justify-center px-4 h-16">
+          <img 
+            src="../public/logo.png" 
+            alt="Frammer AI" 
+            className={`h-7 mt-1.5 transition-all duration-300 object-contain object-left ${
+              collapsed ? "max-w-0 opacity-0 mr-0" : "max-w-[150px] opacity-100 mr-7"
+            }`} 
+          />
         </div>
         <SidebarGroup>
-          <SidebarGroupLabel className="mb-1.5">ANALYTICS</SidebarGroupLabel>
+          <SidebarGroupLabel 
+            className={`mb-1.5 overflow-hidden whitespace-nowrap transition-all duration-300 ${
+              collapsed ? "max-w-0 opacity-0" : "max-w-[200px] opacity-100"
+            }`}
+          >
+            ANALYTICS
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {items.map((item) => (
@@ -41,11 +51,17 @@ export function AppSidebar() {
                     <NavLink
                       to={item.url}
                       end={item.url === "/"}
-                      className="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground text-base"
+                      className="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground text-base flex items-center"
                       activeClassName="bg-sidebar-accent text-sidebar-foreground font-medium text-base"
                     >
-                      <item.icon className="mr-2 h-4 w-4" />
-                      {!collapsed && <span>{item.title}</span>}
+                      <item.icon className={`h-4 w-4 shrink-0 transition-all duration-300 ${collapsed ? "mr-0" : "mr-2"}`} />
+                      <span 
+                        className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${
+                          collapsed ? "max-w-0 opacity-0" : "max-w-[200px] opacity-100"
+                        }`}
+                      >
+                        {item.title}
+                      </span>
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
