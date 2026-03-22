@@ -166,15 +166,18 @@ def chat_stream(question: str, session_id: str | None = None):
             yield _sse("done", {})
             return
 
+        # THE FIX: Send graceful rejections and clarifications as normal chat bubbles ("insight_ready")
         if result.cannot_answer or result.needs_input:
-            yield _sse("error", {
-                "message": result.message or result.error or "Cannot answer this question."
+            yield _sse("insight_ready", {
+                "insight": result.message or result.error or "I cannot answer this question right now."
             })
             yield _sse("done", {})
             return
 
+        # THE FIX: Even if the SQL crashes, show the friendly error in the chat UI
         if not result.success and result.error:
-            yield _sse("error", {"message": result.error})
+            friendly_err = result.message if result.message else result.error
+            yield _sse("insight_ready", {"insight": friendly_err})
             yield _sse("done", {})
             return
 

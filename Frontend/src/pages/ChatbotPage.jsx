@@ -273,23 +273,23 @@ function AIBubble({ data }) {
 
         {/* Error */}
         {isError && (
-          <div className="rounded-2xl rounded-tl-sm border border-red-500/30 bg-red-500/5 px-4 py-3.5">
+          <div className="rounded-2xl rounded-tl-sm border border-border bg-muted/20 px-4 py-3.5">
             <div className="flex items-center gap-2 mb-1.5">
               <XCircle className="h-3.5 w-3.5 text-red-400" />
               <span className="text-[10px] font-bold uppercase tracking-widest text-red-400">Pipeline Error</span>
             </div>
-            <p className="text-sm text-red-300/80 leading-relaxed">{data.error}</p>
+            <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">{data.error}</p>
           </div>
         )}
 
         {/* Clarification */}
         {isClarify && (
-          <div className="rounded-2xl rounded-tl-sm border border-amber-500/30 bg-amber-500/5 px-4 py-3.5">
+          <div className="rounded-2xl rounded-tl-sm border border-border bg-muted/20 px-4 py-3.5">
             <div className="flex items-center gap-2 mb-1.5">
               <HelpCircle className="h-3.5 w-3.5 text-amber-400" />
               <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400">Clarification needed</span>
             </div>
-            <div className="prose prose-sm prose-invert max-w-none prose-p:text-amber-200/80 prose-p:leading-relaxed prose-p:my-0 prose-strong:text-amber-200">
+            <div className="prose prose-sm prose-invert max-w-none prose-p:text-muted-foreground prose-p:leading-relaxed prose-p:my-0 prose-strong:text-foreground">
               <ReactMarkdown>{data.message}</ReactMarkdown>
             </div>
           </div>
@@ -297,7 +297,7 @@ function AIBubble({ data }) {
 
         {/* Cannot answer */}
         {isOutOfScope && (
-          <div className="rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-3.5">
+          <div className="rounded-2xl rounded-tl-sm border border-border bg-muted/20 px-4 py-3.5">
             <div className="flex items-center gap-2 mb-2">
               <AlertTriangle className="h-3.5 w-3.5 text-yellow-500" />
               <span className="text-[10px] font-bold uppercase tracking-widest text-yellow-500">Out of scope</span>
@@ -451,7 +451,7 @@ function CannotAnswerBody({ message }) {
           <div className="space-y-1">
             {suggestions.map((s, i) => (
               <div key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
-                <span className="text-primary/50 shrink-0 font-mono">{i + 1}.</span>
+                <span className="text-muted-foreground/50 shrink-0 font-mono">{i + 1}.</span>
                 <span>{s}</span>
               </div>
             ))}

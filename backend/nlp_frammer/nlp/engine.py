@@ -52,13 +52,17 @@ def _is_sql(text: Optional[str]) -> bool:
 
 
 def _safe_insight(insight: Optional[str], fallback: str) -> Optional[str]:
-    """Returns insight if it's natural language; discards it if it's SQL."""
+    """Returns insight if it's natural language; uses fallback if empty or SQL."""
+    # THE FIX: If insight is None/Empty, use the fallback (which has our Clarify text!)
+    if not insight:
+        return fallback if fallback and not _is_sql(fallback) else None
+        
     if _is_sql(insight):
         logger.warning("[engine] Insight contains raw SQL. Attempting fallback.")
-        # Make sure the fallback isn't ALSO raw SQL!
         if fallback and not _is_sql(fallback):
             return fallback
         return None
+        
     return insight
 
 # ──────────────────────────────────────────────────────────────────────
@@ -84,6 +88,11 @@ def query(text: str, debug: bool = False, thread_id: str = "main") -> NLPResult:
 
     # 3: Run agent
     agent_result = agent_run(text, schema, context.referenced_tables, thread_id=thread_id)
+
+    print(f"\n[DEBUG 🚀] 4. AGENT FINAL STATE (query):")
+    print(f"  - Needs Input: {agent_result.get('needs_input')}")
+    print(f"  - Generated SQL: {agent_result.get('generated_sql')}")
+    print(f"  - Final Message: {agent_result.get('final_message')}\n")
 
     # General answer: return immediately
     if agent_result.get("is_general_answer"):
@@ -165,6 +174,11 @@ def query_stream(text: str, debug: bool = False, thread_id: str = "main"):
 
     # 2: Agent
     agent_result = agent_run(text, schema, context.referenced_tables, thread_id=thread_id)
+
+    print(f"\n[DEBUG 🚀] 4. AGENT FINAL STATE (stream):")
+    print(f"  - Needs Input: {agent_result.get('needs_input')}")
+    print(f"  - Generated SQL: {agent_result.get('generated_sql')}")
+    print(f"  - Final Message: {agent_result.get('final_message')}\n")
 
     # General answer
     if agent_result.get("is_general_answer"):

@@ -357,6 +357,8 @@ def _format_entities_for_clarification(user_question: str) -> str:
         "relevant", "and", "or", "can", "u", "his", "her", "their",
         "what", "which", "who", "get", "find", "list", "tell", "with",
         "all", "do", "did", "has", "have", "please", "want", "now",
+        "current", "previous", "last", "next", "month", "months",
+        "performance", "data", "report", "stats", "statistics", "trend", "on"
     }
 
     raw_tokens = re.findall(r"[a-zA-Z0-9]+", user_question)
@@ -380,9 +382,9 @@ def _format_entities_for_clarification(user_question: str) -> str:
         if t not in tokens:
             tokens.append(t)
 
-    concat = re.sub(r"[^a-zA-Z0-9]", "", user_question).lower()
-    if concat and concat not in tokens:
-        tokens.append(concat)
+    # concat = re.sub(r"[^a-zA-Z0-9]", "", user_question).lower()
+    # if concat and concat not in tokens:
+    #     tokens.append(concat)
 
     # Normalize months and languages BEFORE fuzzy matching
     tokens = _normalize_month_tokens(tokens)
@@ -397,12 +399,12 @@ def _format_entities_for_clarification(user_question: str) -> str:
         low_conf:  list[str] = []
 
         for token in tokens:
-            for m in difflib.get_close_matches(token, list(values_lower.keys()), n=3, cutoff=0.80):
+            for m in difflib.get_close_matches(token, list(values_lower.keys()), n=3, cutoff=0.85):
                 v = values_lower.get(m, m)
                 if v not in high_conf:
                     high_conf.append(v)
 
-            for m in difflib.get_close_matches(token, list(values_lower.keys()), n=3, cutoff=0.35):
+            for m in difflib.get_close_matches(token, list(values_lower.keys()), n=3, cutoff=0.70):
                 v = values_lower.get(m, m)
                 if v not in high_conf and v not in low_conf:
                     low_conf.append(v)
@@ -424,7 +426,12 @@ def _format_entities_for_clarification(user_question: str) -> str:
                 f"provide more characters. Do NOT list all {len(values)} values."
             )
 
-    return "\n".join(lines)
+    print(f"\n[DEBUG 🚀] 1. Extracted Tokens from User: {tokens}")
+    
+    final_reminder_text = "\n".join(lines)
+    print(f"[DEBUG 🚀] 2. What the AI sees for known entities:\n{final_reminder_text}\n")
+    
+    return final_reminder_text
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -556,7 +563,8 @@ RULES — follow strictly in order:
      Did you mean "<matched_value>", or did you mean someone else?
 
 3. No match found:
-   → Do NOT write SQL.
+   → ⚠️ TIME EXCEPTION: Do NOT ask for clarification if the unmatched word is a relative time term (e.g., 'current', 'previous', 'last', 'recent', 'this'). The dataset covers up to Feb, 2026. Translate 'current month' to 'Feb, 2026' and 'previous month' to 'Jan, 2026' silently and write the SQL.
+   → Otherwise, Do NOT write SQL.
    → Return: CLARIFY: I couldn't find a match for "<value>". Could you check
      the spelling or type the first few letters of the name you're looking for?
 
@@ -574,6 +582,10 @@ User question: {state['user_question']}"""
         response = llm.invoke(messages)
         raw = str(response.content).strip()
         logger.debug(f"[agent] Raw Gemini response:\n{raw}")
+        
+        # [DEBUG 🚀] 3: Check EXACTLY what Gemini replied
+        print(f"\n[DEBUG 🚀] 3. RAW GEMINI RESPONSE:\n{raw}\n")
+        
     except Exception as e:
         logger.error(f"[agent] Gemini API call failed: {e}")
         return {
@@ -608,11 +620,49 @@ def node_execute_sql(state: AgentState) -> dict:
 
     if not exec_result.success:
         logger.error(f"[agent] Execution failed: {exec_result.error}")
+        error_str = str(exec_result.error)
+
+        # ── THE FIX: STRICT HARDCODED SUGGESTIONS ──
+        try:
+            llm = _get_llm_plain()
+            error_prompt = f"""The user asked a question, but the SQL query caused a database schema error.
+            
+User Question: "{state['user_question']}"
+Database Error: {error_str}
+
+Write a friendly, helpful message explaining that this specific combination of data is not available.
+RULES:
+1. Do NOT mention SQL, databases, DuckDB, or technical errors.
+2. Gracefully explain what is missing in plain English.
+3. You MUST format your response EXACTLY as shown below, using the EXACT three hardcoded suggestions provided. Do not invent your own suggestions.
+
+Format your response EXACTLY like this:
+I'm sorry, but I don't have the data to show [explain what's missing].
+
+Here are some things you could ask instead:
+    1. Compare performance metrics between users and platforms using the star schema.
+    2. Show a comparison of users based on their publish rate.
+    3. Compare performance between channels and users."""
+
+            response = llm.invoke([HumanMessage(content=error_prompt)])
+            friendly_msg = str(response.content).strip()
+            
+        except Exception as llm_err:
+            logger.error(f"[agent] Failed to generate dynamic error msg: {llm_err}")
+            # Absolute fallback just in case the Gemini API drops the connection
+            friendly_msg = (
+                "I'm sorry, but I don't have a dataset that combines those specific details.\n\n"
+                "Here are some things you could ask instead:\n"
+                "1. Compare performance metrics between users and platforms using the star schema.\n"
+                "2. Show a comparison of users based on their publish rate.\n"
+                "3. Compare performance between channels and users."
+            )
+
         return {
-            "sql_error":     exec_result.error,
+            "sql_error":     friendly_msg,
             "data":          [],
             "row_count":     0,
-            "final_message": f"SQL execution error: {exec_result.error}",
+            "final_message": friendly_msg,
         }
 
     return {
@@ -670,14 +720,17 @@ CANNOT_ANSWER: <reason> | <suggestion 1> | <suggestion 2> | <suggestion 3>"""
         }
 
     if raw.startswith("CANNOT_ANSWER:"):
-        parts       = raw[len("CANNOT_ANSWER:"):].strip().split("|")
-        reason      = parts[0].strip()
-        suggestions = [p.strip() for p in parts[1:]]
-        msg = reason
-        if suggestions:
-            msg += "\n\nYou could try:\n" + "\n".join(
-                f"  {i+1}) {s}" for i, s in enumerate(suggestions)
-            )
+        parts  = raw[len("CANNOT_ANSWER:"):].strip().split("|")
+        reason = parts[0].strip()
+        
+        # ── THE FIX: Hardcode our 3 Golden Questions here too! ──
+        msg = (
+            f"{reason}\n\n"
+            "Here are some things you could ask instead:\n"
+            "1. Compare performance metrics between users and platforms using the star schema.\n"
+            "2. Show a comparison of users based on their publish rate.\n"
+            "3. Compare performance between channels and users."
+        )
         return {"needs_input": False, "cannot_answer": True, "final_message": msg}
 
     return {"needs_input": True, "cannot_answer": False, "final_message": raw}
@@ -703,13 +756,17 @@ def node_format_cannot_answer(state: AgentState) -> dict:
     raw: str = str(state.get("final_message", ""))
     parts = [p.strip() for p in raw.split("|")]
 
-    if len(parts) >= 2:
-        reason      = parts[0]
-        suggestions = parts[1:]
-        numbered    = "\n".join(f"  {i}. {s}" for i, s in enumerate(suggestions, 1))
-        message     = f"{reason}\n\nHere are some things you could ask instead:\n{numbered}"
-    else:
-        message = raw
+    # The first part is always the reason (e.g., "The dataset does not contain...")
+    reason = parts[0] if parts else "I cannot answer this question based on the available data."
+    
+    # ── THE FIX: Hardcode our 3 Golden Questions ──
+    message = (
+        f"{reason}\n\n"
+        "Here are some things you could ask instead:\n"
+            "1. Compare performance metrics between users and platforms using the star schema.\n"
+            "2. Show a comparison of users based on their publish rate.\n"
+            "3. Compare performance between channels and users."
+    )
 
     return {
         "final_message": message,

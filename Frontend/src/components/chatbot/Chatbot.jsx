@@ -195,7 +195,7 @@ function InsightBubble({ insight }) {
 
 function ErrorBubble({ message }) {
   return (
-    <div className="mr-auto max-w-[90%] rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">
+    <div className="mr-auto max-w-[90%] rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive whitespace-pre-wrap">
       {message}
     </div>
   );
