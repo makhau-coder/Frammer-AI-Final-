@@ -425,11 +425,9 @@ def _format_entities_for_clarification(user_question: str) -> str:
                 f"  {label}: No match found — ask user to check spelling or "
                 f"provide more characters. Do NOT list all {len(values)} values."
             )
-
-    print(f"\n[DEBUG 🚀] 1. Extracted Tokens from User: {tokens}")
     
     final_reminder_text = "\n".join(lines)
-    print(f"[DEBUG 🚀] 2. What the AI sees for known entities:\n{final_reminder_text}\n")
+
     
     return final_reminder_text
 
@@ -582,9 +580,6 @@ User question: {state['user_question']}"""
         response = llm.invoke(messages)
         raw = str(response.content).strip()
         logger.debug(f"[agent] Raw Gemini response:\n{raw}")
-        
-        # [DEBUG 🚀] 3: Check EXACTLY what Gemini replied
-        print(f"\n[DEBUG 🚀] 3. RAW GEMINI RESPONSE:\n{raw}\n")
         
     except Exception as e:
         logger.error(f"[agent] Gemini API call failed: {e}")

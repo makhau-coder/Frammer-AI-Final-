@@ -89,11 +89,6 @@ def query(text: str, debug: bool = False, thread_id: str = "main") -> NLPResult:
     # 3: Run agent
     agent_result = agent_run(text, schema, context.referenced_tables, thread_id=thread_id)
 
-    print(f"\n[DEBUG 🚀] 4. AGENT FINAL STATE (query):")
-    print(f"  - Needs Input: {agent_result.get('needs_input')}")
-    print(f"  - Generated SQL: {agent_result.get('generated_sql')}")
-    print(f"  - Final Message: {agent_result.get('final_message')}\n")
-
     # General answer: return immediately
     if agent_result.get("is_general_answer"):
         answer = agent_result["final_message"]
@@ -174,11 +169,6 @@ def query_stream(text: str, debug: bool = False, thread_id: str = "main"):
 
     # 2: Agent
     agent_result = agent_run(text, schema, context.referenced_tables, thread_id=thread_id)
-
-    print(f"\n[DEBUG 🚀] 4. AGENT FINAL STATE (stream):")
-    print(f"  - Needs Input: {agent_result.get('needs_input')}")
-    print(f"  - Generated SQL: {agent_result.get('generated_sql')}")
-    print(f"  - Final Message: {agent_result.get('final_message')}\n")
 
     # General answer
     if agent_result.get("is_general_answer"):
