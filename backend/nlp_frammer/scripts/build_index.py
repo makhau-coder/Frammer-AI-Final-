@@ -7,8 +7,12 @@
 #   python scripts/build_index.py          # upsert (safe re-run)
 #   python scripts/build_index.py --force  # wipe + rebuild from scratch
 
+
 import sys
 import os
+
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

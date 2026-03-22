@@ -29,6 +29,9 @@ RUN pip install --upgrade pip && \
 # ── Application code ──────────────────────────────────────────────────────────
 COPY . .
 
+# Ensure data directories exist so the file watcher doesn't crash
+RUN mkdir -p data/raw data/processed
+
 # ── Ports ─────────────────────────────────────────────────────────────────────
 EXPOSE 8000
 

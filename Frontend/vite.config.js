@@ -14,7 +14,7 @@ export default defineConfig(({ mode }) => ({
     // This removes the need for hardcoded http://localhost:8000 in every component
     proxy: {
       "/api": {
-        target: "http://localhost:8000",
+        target: "https://frammer-ai-final.onrender.com",
         changeOrigin: true,
         secure: false,
       },

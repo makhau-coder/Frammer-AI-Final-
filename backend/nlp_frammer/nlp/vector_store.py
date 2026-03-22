@@ -3,6 +3,7 @@ from typing import Optional
 import chromadb
 import chromadb.utils.embedding_functions as embedding_functions
 
+# Note: Ensure these imports work based on your tree structure
 from nlp.metadata import METADATA
 from nlp.metrics import METRICS
 from nlp.examples import EXAMPLES
@@ -13,6 +14,7 @@ from nlp.examples import EXAMPLES
 
 CHROMA_DB_PATH   = os.path.join(os.path.dirname(__file__), "..", "data", "chroma_db")
 COLLECTION_NAME  = "frammer_analytics"
+EMBEDDING_MODEL  = "models/gemini-embedding-001" 
 
 ALL_CHUNKS = METADATA + METRICS + EXAMPLES
 
@@ -26,29 +28,34 @@ def _get_client():
     return chromadb.PersistentClient(path=CHROMA_DB_PATH)
 
 def _get_embedding_fn():
-    """Returns the Google Gemini API embedding function (Zero local RAM)."""
+    """Returns the Google Gemini API embedding function."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
+        # For local scripts, this error is helpful
         raise ValueError("GEMINI_API_KEY is missing from environment variables.")
     
     return embedding_functions.GoogleGenerativeAiEmbeddingFunction(
         api_key=api_key,
+        model_name=EMBEDDING_MODEL,
         task_type="RETRIEVAL_DOCUMENT"
     )
 
 # ──────────────────────────────────────────────────────────────────────
-# PUBLIC: GET COLLECTION (used by retriever at query time)
+# PUBLIC: GET COLLECTION
 # ──────────────────────────────────────────────────────────────────────
 
 def get_collection():
+    import logging
+    logger = logging.getLogger(__name__)
+    
     client = _get_client()
-    existing = [c.name for c in client.list_collections()]
+    
+    # FIX for Chroma v0.6.0: list_collections() now returns strings directly
+    existing_names = client.list_collections()
 
-    if COLLECTION_NAME not in existing:
-        raise RuntimeError(
-            f"ChromaDB collection '{COLLECTION_NAME}' not found. "
-            f"Run: python scripts/build_index.py"
-        )
+    if COLLECTION_NAME not in existing_names:
+        logger.info(f"[vector_store] Collection '{COLLECTION_NAME}' not found. Auto-building...")
+        index_all()
 
     try:
         return client.get_collection(
@@ -56,11 +63,8 @@ def get_collection():
             embedding_function=_get_embedding_fn(),
         )
     except Exception as e:
-        if "does not exist" in str(e).lower() or "notfounderror" in type(e).__name__.lower():
-            import logging
-            logging.getLogger(__name__).warning(
-                f"[vector_store] Stale ChromaDB UUID detected — auto-rebuilding index."
-            )
+        if "does not exist" in str(e).lower():
+            logger.warning(f"[vector_store] Stale reference — rebuilding index.")
             index_all(force=True)
             return client.get_collection(
                 name=COLLECTION_NAME,
@@ -69,18 +73,19 @@ def get_collection():
         raise
 
 # ──────────────────────────────────────────────────────────────────────
-# PUBLIC: INDEX ALL CHUNKS (called once from build_index.py)
+# PUBLIC: INDEX ALL CHUNKS
 # ──────────────────────────────────────────────────────────────────────
 
 def index_all(force: bool = False) -> None:
     client       = _get_client()
     embedding_fn = _get_embedding_fn()
 
-    if force:
-        existing = [c.name for c in client.list_collections()]
-        if COLLECTION_NAME in existing:
-            client.delete_collection(COLLECTION_NAME)
-            print(f"[vector_store] Deleted existing collection '{COLLECTION_NAME}'.")
+    # FIX for Chroma v0.6.0: checking names directly
+    existing_names = client.list_collections()
+    
+    if force and COLLECTION_NAME in existing_names:
+        client.delete_collection(COLLECTION_NAME)
+        print(f"[vector_store] Deleted existing collection '{COLLECTION_NAME}'.")
 
     collection = client.get_or_create_collection(
         name=COLLECTION_NAME,
@@ -106,11 +111,7 @@ def index_all(force: bool = False) -> None:
         metadatas=metadatas,
     )
 
-    counts = _count_by_type(ALL_CHUNKS)
-    print(
-        f"[vector_store] Index built successfully with Gemini API.\n"
-        f"  Total chunks indexed: {len(ALL_CHUNKS)}\n"
-    )
+    print(f"[vector_store] Index built successfully with {EMBEDDING_MODEL}.\n")
 
 def _count_by_type(chunks: list[dict]) -> dict[str, int]:
     counts: dict[str, int] = {}

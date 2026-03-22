@@ -125,33 +125,15 @@ CANNOT_ANSWER: <one sentence why> | <suggestion 1> | <suggestion 2> | <suggestio
 # ──────────────────────────────────────────────────────────────────────
 
 _CLASSIFIER_PROMPT = """
-You are a router. Classify the user message into exactly one category.
+You are a strict query router. Classify the user message into exactly one category: GENERAL or DATA.
 
-GENERAL — user is asking about the platform, its features, metrics, terminology,
-available data, tables, dimensions, or how something works.
+GENERAL:
+The user is asking about the software platform itself, asking for definitions of metrics, or saying hello.
+Examples: "what is frammer ai", "what does publish rate mean", "hi", "what metrics do you have"
 
-DATA — user wants specific numbers, stats, rankings, trends, or comparisons
-that need to be looked up.
-
-Examples of GENERAL:
-  "what is frammer ai"
-  "give information about frammer"
-  "what is a creation multiplier"
-  "what does publish rate mean"
-  "what tables are available"
-  "what metrics can you calculate"
-  "what is the star schema"
-  "what languages are supported"
-  "what platforms does frammer publish to"
-  "tell me about the data model"
-  "hi"
-  "what can you do"
-
-Examples of DATA:
-  "how many videos were uploaded in february"
-  "which user has the highest publish rate"
-  "show me creation multiplier by channel"
-  "top 5 users by uploads"
+DATA:
+The user wants specific information, stats, or details about the content. IF THE USER MENTIONS A SPECIFIC PERSON, CHANNEL, PLATFORM, OR DATE, IT IS ALWAYS DATA.
+Examples: "give info about channel q", "give info about neha", "how many videos were uploaded", "top 5 users"
 
 Reply with exactly one word: GENERAL or DATA
 """.strip()
